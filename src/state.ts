@@ -29,12 +29,10 @@ export interface RewindState {
   currentPrompt: string;
   /** Pending tool info captured from tool_call (before execution ends) */
   pendingToolInfo: Map<string, string>;
-  /** Debounce timer for coalescing rapid tool checkpoints */
-  debounceTimer: ReturnType<typeof setTimeout> | null;
-  /** Tool descriptions accumulated during the debounce window */
-  debounceDescriptions: string[];
-  /** Cached ctx for the debounce flush */
-  debounceCtx: any;
+  /** Tool descriptions accumulated during the current turn */
+  turnToolDescriptions: string[];
+  /** Whether the current turn had any mutating tool calls */
+  turnHadMutations: boolean;
 }
 
 export function createInitialState(): RewindState {
@@ -50,14 +48,12 @@ export function createInitialState(): RewindState {
     currentTurnIndex: 0,
     currentPrompt: "",
     pendingToolInfo: new Map(),
-    debounceTimer: null,
-    debounceDescriptions: [],
-    debounceCtx: null,
+    turnToolDescriptions: [],
+    turnHadMutations: false,
   };
 }
 
 export function resetState(state: RewindState): void {
-  if (state.debounceTimer) clearTimeout(state.debounceTimer);
   state.gitAvailable = false;
   state.repoRoot = null;
   state.sessionId = null;
@@ -69,7 +65,6 @@ export function resetState(state: RewindState): void {
   state.currentTurnIndex = 0;
   state.currentPrompt = "";
   state.pendingToolInfo.clear();
-  state.debounceTimer = null;
-  state.debounceDescriptions = [];
-  state.debounceCtx = null;
+  state.turnToolDescriptions = [];
+  state.turnHadMutations = false;
 }
