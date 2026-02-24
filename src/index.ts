@@ -88,10 +88,10 @@ export default function (pi: ExtensionAPI) {
         sessionId: state.sessionId,
         trigger: "resume",
         turnIndex: 0,
+        description: "Session start",
       });
       state.resumeCheckpoint = cp;
       state.checkpoints.set(cp.id, cp);
-      state.descriptions.set(cp.id, "Session start");
     } catch {
       // Resume checkpoint is optional
     }
@@ -144,19 +144,18 @@ export default function (pi: ExtensionAPI) {
     state.pending = (async () => {
       try {
         const id = `turn-${state.sessionId}-${event.turnIndex}-${event.timestamp}`;
+        const desc = state.currentPrompt
+          ? `"${state.currentPrompt}"`
+          : `Turn ${event.turnIndex}`;
         const cp = await createCheckpoint({
           root: state.repoRoot!,
           id,
           sessionId: state.sessionId!,
           trigger: "turn",
           turnIndex: event.turnIndex,
+          description: desc,
         });
         state.checkpoints.set(cp.id, cp);
-        // Use prompt if available, otherwise generic label
-        const desc = state.currentPrompt
-          ? `"${state.currentPrompt}"`
-          : `Turn ${event.turnIndex}`;
-        state.descriptions.set(cp.id, desc);
         updateStatus(state, ctx);
       } catch {
         state.failed = true;
@@ -177,7 +176,7 @@ export default function (pi: ExtensionAPI) {
     if (state.pending) await state.pending;
 
     // Get the description captured from tool_call
-    const desc = state.pendingToolInfo.get(event.toolCallId)
+    const toolDesc = state.pendingToolInfo.get(event.toolCallId)
       || `${event.toolName}`;
     state.pendingToolInfo.delete(event.toolCallId);
 
@@ -192,9 +191,9 @@ export default function (pi: ExtensionAPI) {
           trigger: "tool",
           turnIndex: state.currentTurnIndex,
           toolName: event.toolName,
+          description: `→ ${toolDesc}`,
         });
         state.checkpoints.set(cp.id, cp);
-        state.descriptions.set(cp.id, `→ ${desc}`);
         updateStatus(state, ctx);
       } catch {
         // Don't set failed for tool checkpoints — transient errors are OK

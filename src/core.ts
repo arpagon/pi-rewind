@@ -57,6 +57,8 @@ export interface CheckpointData {
   turnIndex: number;
   /** Tool name if trigger === "tool" */
   toolName?: string;
+  /** Human-readable description (prompt text, tool args, etc.) */
+  description?: string;
   /** SHA of HEAD at snapshot time */
   headSha: string;
   /** SHA of the real git index tree */
@@ -347,6 +349,8 @@ export interface CreateCheckpointOpts {
   trigger: CheckpointData["trigger"];
   turnIndex: number;
   toolName?: string;
+  /** Human-readable label (user prompt, tool args summary) */
+  description?: string;
 }
 
 /**
@@ -354,7 +358,7 @@ export interface CreateCheckpointOpts {
  * Returns full checkpoint metadata.
  */
 export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<CheckpointData> {
-  const { root, id, sessionId, trigger, turnIndex, toolName } = opts;
+  const { root, id, sessionId, trigger, turnIndex, toolName, description } = opts;
   const timestamp = Date.now();
   const iso = new Date(timestamp).toISOString();
 
@@ -401,6 +405,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
       `trigger ${trigger}`,
       `turn ${turnIndex}`,
       toolName ? `toolName ${toolName}` : null,
+      description ? `description ${description}` : null,
       `head ${headSha}`,
       `index-tree ${indexTreeSha}`,
       `worktree-tree ${worktreeTreeSha}`,
@@ -433,6 +438,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
       trigger,
       turnIndex,
       toolName,
+      description,
       headSha,
       indexTreeSha,
       worktreeTreeSha,
@@ -542,6 +548,7 @@ export async function loadCheckpointFromRef(
       trigger: (get("trigger") as CheckpointData["trigger"]) || "turn",
       turnIndex: parseInt(turn, 10),
       toolName: get("toolName"),
+      description: get("description"),
       headSha: head,
       indexTreeSha: idx,
       worktreeTreeSha: wt,

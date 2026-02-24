@@ -22,15 +22,14 @@ function formatTimestamp(ts: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function formatCheckpointLabel(cp: CheckpointData, index: number, state: RewindState): string {
+function formatCheckpointLabel(cp: CheckpointData, index: number, _state: RewindState): string {
   const time = formatTimestamp(cp.timestamp);
-  const desc = state.descriptions.get(cp.id);
 
-  if (desc) {
-    return `#${index + 1} [${time}] ${desc}`;
+  if (cp.description) {
+    return `#${index + 1} [${time}] ${cp.description}`;
   }
 
-  // Fallback for checkpoints loaded from git refs (no in-memory description)
+  // Fallback for old checkpoints without description
   if (cp.trigger === "resume") return `#${index + 1} [${time}] Session start`;
   if (cp.trigger === "tool" && cp.toolName) return `#${index + 1} [${time}] → ${cp.toolName}`;
   return `#${index + 1} [${time}] Turn ${cp.turnIndex}`;
@@ -58,9 +57,11 @@ async function runRewindFlow(
     return;
   }
 
-  // Collect checkpoints sorted newest-first
+  // Collect checkpoints sorted newest-first (limit to 25 most recent)
+  const MAX_DISPLAY = 25;
   const checkpoints = [...state.checkpoints.values()]
-    .sort((a, b) => b.timestamp - a.timestamp);
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, MAX_DISPLAY);
 
   if (checkpoints.length === 0) {
     ctx.ui.notify("No checkpoints available", "warning");
@@ -313,7 +314,8 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
       }
 
       const checkpoints = [...state.checkpoints.values()]
-        .sort((a, b) => b.timestamp - a.timestamp);
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 25);
 
       if (checkpoints.length === 0) {
         ctx.ui.notify("No checkpoints available", "warning");
