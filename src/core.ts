@@ -619,7 +619,8 @@ export async function diffCheckpoints(
   toTree: string,
 ): Promise<string> {
   try {
-    return await git(`diff --stat ${fromTree} ${toTree}`, root);
+    // diff-tree compares two tree objects and works with tree SHAs or commit refs
+    return await git(`diff-tree --stat --no-commit-id ${fromTree} ${toTree}`, root);
   } catch {
     return "(diff unavailable)";
   }

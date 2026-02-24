@@ -98,22 +98,25 @@ async function runRewindFlow(
   const target = checkpoints[idx];
 
   // Show diff preview
+  let diffText = "";
   try {
-    const currentTree = await import("./core.js")
-      .then((m) => m.git("write-tree", state.repoRoot!));
-    const diff = await diffCheckpoints(state.repoRoot, currentTree, target.worktreeTreeSha);
+    const diff = await diffCheckpoints(state.repoRoot, target.worktreeTreeSha, "HEAD");
     if (diff && diff !== "(diff unavailable)") {
-      const proceed = await ctx.ui.confirm(
-        `Changes if restored to #${idx + 1}:`,
-        diff.slice(0, 2000),
-      );
-      if (!proceed) {
-        ctx.ui.notify("Rewind cancelled", "info");
-        return;
-      }
+      diffText = diff.slice(0, 2000);
     }
   } catch {
     // Continue without preview if diff fails
+  }
+
+  if (diffText) {
+    const proceed = await ctx.ui.confirm(
+      `Files changed since checkpoint #${idx + 1}:\n\n${diffText}`,
+      "Proceed with restore?",
+    );
+    if (!proceed) {
+      ctx.ui.notify("Rewind cancelled", "info");
+      return;
+    }
   }
 
   // Ask restore mode
