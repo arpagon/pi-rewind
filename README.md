@@ -8,34 +8,61 @@ Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CL
 
 **pi-rewind** aims to be the best rewind experience for Pi, combining the strengths of existing community extensions with features from the top agents.
 
-## Features (Planned)
+## Features
 
-- [x] Git-based checkpoints stored as refs (survives restarts)
-- [x] Safe restore — never deletes `node_modules`, `.venv`, or large files
-- [x] Smart filtering — excludes build artifacts and large directories
+- [x] Dedicated `/rewind` command — checkpoint browser → diff preview → restore
+- [x] `Esc+Esc` keyboard shortcut — quick files-only rewind
+- [x] Per-tool checkpointing — after each write, edit, bash
+- [x] Per-turn checkpointing — snapshot at start of every turn
+- [x] Checkpoint browser with diff preview before restore
+- [x] Redo stack (multi-level undo) — "↩ Undo last rewind" in all flows
 - [x] Restore options: files + conversation, files only, conversation only
-- [x] Undo last rewind safety net
-- [ ] Dedicated `/rewind` command
-- [ ] `Esc+Esc` keyboard shortcut
-- [ ] Per-tool checkpointing (after each write/edit/bash)
-- [ ] Checkpoint browser with diff preview
-- [ ] Redo stack (multi-level undo)
-- [ ] "Summarize from here" integration
-- [ ] Footer status indicator (`◆ X checkpoints`)
-- [ ] Auto-pruning (configurable max checkpoints)
-- [ ] Resume checkpoint on session start
+- [x] Safe restore — never deletes `node_modules`, `.venv`, or large files
+- [x] Smart filtering — excludes 13 dir patterns, files >10MiB, dirs >200 files
+- [x] Git-based checkpoints stored as refs (survives restarts)
+- [x] Footer status indicator (`◆ X checkpoints`)
+- [x] Auto-pruning (100 max checkpoints per session)
+- [x] Resume checkpoint on session start
+- [x] Fork/tree integration — restore prompts on `/fork` and `/tree` navigation
+- [ ] "Summarize from here" integration (`ctx.compact()`)
 
 ## Install
 
 ```bash
+# From npm
+pi install npm:pi-rewind
+
+# From GitHub
 pi install github.com/arpagon/pi-rewind
-```
 
-Or for development:
-
-```bash
+# For development
 git clone git@github.com:arpagon/pi-rewind.git
 pi -e ./pi-rewind/src/index.ts
+```
+
+## Architecture
+
+Two-layer split: `core.ts` is pure git operations with zero Pi dependency (independently testable), `index.ts` wires Pi events to core functions.
+
+```
+src/
+├── core.ts       # 646 LOC — git operations, filtering, safe restore
+├── index.ts      # 201 LOC — Pi event hooks, checkpoint scheduling
+├── commands.ts   # 328 LOC — /rewind, Esc+Esc, fork/tree handlers
+├── state.ts      #  50 LOC — shared mutable state
+└── ui.ts         #  33 LOC — footer status indicator
+tests/
+└── core.test.ts  # 327 LOC — 19 tests passing
+```
+
+## Development
+
+```bash
+# Run tests
+npx tsx tests/core.test.ts
+
+# Test with Pi
+pi -e ./src/index.ts
 ```
 
 ## Lineage
