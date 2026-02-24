@@ -12,8 +12,9 @@ Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CL
 
 - [x] Dedicated `/rewind` command — checkpoint browser → diff preview → restore
 - [x] `Esc+Esc` keyboard shortcut — quick files-only rewind
-- [x] Per-tool checkpointing — after each write, edit, bash
-- [x] Per-turn checkpointing — snapshot at start of every turn
+- [x] 1 checkpoint per turn — after all tools finish (like Cline)
+- [x] Descriptive labels — `"user prompt" → write → file.ts, edit → other.ts`
+- [x] Diff preview before restore — see exactly what changes
 - [x] Checkpoint browser with diff preview before restore
 - [x] Redo stack (multi-level undo) — "↩ Undo last rewind" in all flows
 - [x] Restore options: files + conversation, files only, conversation only
