@@ -59,6 +59,8 @@ export interface CheckpointData {
   toolName?: string;
   /** Human-readable description (prompt text, tool args, etc.) */
   description?: string;
+  /** Git branch name at snapshot time */
+  branch: string;
   /** SHA of HEAD at snapshot time */
   headSha: string;
   /** SHA of the real git index tree */
@@ -363,6 +365,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
   const iso = new Date(timestamp).toISOString();
 
   const headSha = await git("rev-parse HEAD", root).catch(() => ZEROS);
+  const branch = await git("rev-parse --abbrev-ref HEAD", root).catch(() => "unknown");
   const indexTreeSha = await git("write-tree", root);
 
   const tmpDir = await mkdtemp(join(tmpdir(), "pi-rewind-"));
@@ -406,6 +409,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
       `turn ${turnIndex}`,
       toolName ? `toolName ${toolName}` : null,
       description ? `description ${description}` : null,
+      `branch ${branch}`,
       `head ${headSha}`,
       `index-tree ${indexTreeSha}`,
       `worktree-tree ${worktreeTreeSha}`,
@@ -439,6 +443,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
       turnIndex,
       toolName,
       description,
+      branch,
       headSha,
       indexTreeSha,
       worktreeTreeSha,
@@ -457,6 +462,16 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
  * Safely preserves pre-existing untracked files and skipped large items.
  */
 export async function restoreCheckpoint(root: string, cp: CheckpointData): Promise<void> {
+  // Safety: verify we're on the same branch as when the checkpoint was created
+  if (cp.branch) {
+    const currentBranch = await git("rev-parse --abbrev-ref HEAD", root).catch(() => "unknown");
+    if (currentBranch !== cp.branch) {
+      throw new Error(
+        `Branch mismatch: checkpoint was created on "${cp.branch}" but you are on "${currentBranch}". ` +
+        `Switch to "${cp.branch}" first, or this restore could corrupt your worktree.`
+      );
+    }
+  }
   // 1. Reset HEAD
   if (cp.headSha !== ZEROS) {
     await git(`reset --hard ${cp.headSha}`, root);
@@ -549,6 +564,7 @@ export async function loadCheckpointFromRef(
       turnIndex: parseInt(turn, 10),
       toolName: get("toolName"),
       description: get("description"),
+      branch: get("branch") || "unknown",
       headSha: head,
       indexTreeSha: idx,
       worktreeTreeSha: wt,

@@ -310,6 +310,41 @@ async function runTests() {
     assertEqual(result, undefined, "empty");
   });
 
+  // ------ Branch safety ------
+
+  await test("restore blocks cross-branch restore", async () => {
+    const branchRepo = await createTempRepo();
+    try {
+      // Create checkpoint on main
+      const cp = await createCheckpoint({
+        root: branchRepo,
+        id: `branch-test-${Date.now()}`,
+        sessionId: "branch-test",
+        trigger: "tool",
+        turnIndex: 0,
+        description: "on main",
+      });
+
+      // Create and switch to feature branch
+      await git("checkout -b feature", branchRepo);
+      await writeFile(join(branchRepo, "feature.txt"), "feature content");
+      await git("add .", branchRepo);
+      await git('commit -m "feature commit"', branchRepo);
+
+      // Try to restore main checkpoint while on feature — should throw
+      let threw = false;
+      try {
+        await restoreCheckpoint(branchRepo, cp);
+      } catch (e: any) {
+        threw = true;
+        assert(e.message.includes("Branch mismatch"), `expected branch mismatch error, got: ${e.message}`);
+      }
+      assert(threw, "should have thrown on cross-branch restore");
+    } finally {
+      await rm(branchRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   // ------ Cleanup ------
 
   await cleanupRepo(repo);
