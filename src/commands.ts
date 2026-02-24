@@ -8,7 +8,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { RewindState } from "./state.js";
 import type { CheckpointData } from "./core.js";
-import { restoreCheckpoint, createCheckpoint, diffCheckpoints, sanitizeForRef } from "./core.js";
+import { restoreCheckpoint, createCheckpoint, diffCheckpoints, sanitizeForRef, git } from "./core.js";
 
 // ============================================================================
 // Helpers
@@ -22,17 +22,20 @@ function formatTimestamp(ts: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function formatCheckpointLabel(cp: CheckpointData, index: number, _state: RewindState): string {
+function formatCheckpointLabel(cp: CheckpointData, index: number, _state: RewindState, currentBranch?: string): string {
   const time = formatTimestamp(cp.timestamp);
+  const branchTag = (cp.branch && currentBranch && cp.branch !== currentBranch)
+    ? ` ⚠️ ${cp.branch}`
+    : (cp.branch ? ` [${cp.branch}]` : "");
 
   if (cp.description) {
-    return `#${index + 1} [${time}] ${cp.description}`;
+    return `#${index + 1} [${time}]${branchTag} ${cp.description}`;
   }
 
   // Fallback for old checkpoints without description
-  if (cp.trigger === "resume") return `#${index + 1} [${time}] Session start`;
-  if (cp.trigger === "tool" && cp.toolName) return `#${index + 1} [${time}] → ${cp.toolName}`;
-  return `#${index + 1} [${time}] Turn ${cp.turnIndex}`;
+  if (cp.trigger === "resume") return `#${index + 1} [${time}]${branchTag} Session start`;
+  if (cp.trigger === "tool" && cp.toolName) return `#${index + 1} [${time}]${branchTag} → ${cp.toolName}`;
+  return `#${index + 1} [${time}]${branchTag} Turn ${cp.turnIndex}`;
 }
 
 type RestoreMode = "all" | "files" | "conversation" | "cancel";
@@ -70,12 +73,13 @@ async function runRewindFlow(
 
   // Build picker items
   const items: string[] = [];
+  const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
   const undoRef = state.redoStack.length > 0 ? state.redoStack[state.redoStack.length - 1] : null;
   if (undoRef) {
     items.push("↩ Undo last rewind");
   }
   for (let i = 0; i < checkpoints.length; i++) {
-    items.push(formatCheckpointLabel(checkpoints[i], i, state));
+    items.push(formatCheckpointLabel(checkpoints[i], i, state, currentBranch));
   }
 
   const choice = await ctx.ui.select("Rewind to checkpoint:", items);
@@ -325,7 +329,8 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
         return;
       }
 
-      const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state));
+      const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
+      const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state, currentBranch));
       const choice = await ctx.ui.select("Quick rewind (files only):", items);
       if (!choice) return;
 
