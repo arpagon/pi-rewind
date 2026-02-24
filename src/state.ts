@@ -15,6 +15,8 @@ export interface RewindState {
   sessionId: string | null;
   /** In-memory checkpoint cache: checkpoint ID → data */
   checkpoints: Map<string, CheckpointData>;
+  /** Human-readable descriptions: checkpoint ID → description */
+  descriptions: Map<string, string>;
   /** Checkpoint taken at session start (fallback for restore) */
   resumeCheckpoint: CheckpointData | null;
   /** Stack of before-restore checkpoints for undo */
@@ -23,6 +25,12 @@ export interface RewindState {
   failed: boolean;
   /** Promise of in-flight checkpoint (avoid races) */
   pending: Promise<void> | null;
+  /** Current turn index (updated by turn_start) */
+  currentTurnIndex: number;
+  /** Current user prompt (updated by before_agent_start) */
+  currentPrompt: string;
+  /** Pending tool info captured from tool_call (before execution ends) */
+  pendingToolInfo: Map<string, string>;
 }
 
 export function createInitialState(): RewindState {
@@ -31,10 +39,14 @@ export function createInitialState(): RewindState {
     repoRoot: null,
     sessionId: null,
     checkpoints: new Map(),
+    descriptions: new Map(),
     resumeCheckpoint: null,
     redoStack: [],
     failed: false,
     pending: null,
+    currentTurnIndex: 0,
+    currentPrompt: "",
+    pendingToolInfo: new Map(),
   };
 }
 
@@ -43,8 +55,12 @@ export function resetState(state: RewindState): void {
   state.repoRoot = null;
   state.sessionId = null;
   state.checkpoints.clear();
+  state.descriptions.clear();
   state.resumeCheckpoint = null;
   state.redoStack = [];
   state.failed = false;
   state.pending = null;
+  state.currentTurnIndex = 0;
+  state.currentPrompt = "";
+  state.pendingToolInfo.clear();
 }

@@ -22,12 +22,18 @@ function formatTimestamp(ts: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function formatCheckpointLabel(cp: CheckpointData, index: number): string {
+function formatCheckpointLabel(cp: CheckpointData, index: number, state: RewindState): string {
   const time = formatTimestamp(cp.timestamp);
-  const trigger = cp.trigger === "tool" && cp.toolName
-    ? `tool:${cp.toolName}`
-    : cp.trigger;
-  return `#${index + 1} [${time}] turn ${cp.turnIndex} (${trigger})`;
+  const desc = state.descriptions.get(cp.id);
+
+  if (desc) {
+    return `#${index + 1} [${time}] ${desc}`;
+  }
+
+  // Fallback for checkpoints loaded from git refs (no in-memory description)
+  if (cp.trigger === "resume") return `#${index + 1} [${time}] Session start`;
+  if (cp.trigger === "tool" && cp.toolName) return `#${index + 1} [${time}] → ${cp.toolName}`;
+  return `#${index + 1} [${time}] Turn ${cp.turnIndex}`;
 }
 
 type RestoreMode = "all" | "files" | "conversation" | "cancel";
@@ -68,7 +74,7 @@ async function runRewindFlow(
     items.push("↩ Undo last rewind");
   }
   for (let i = 0; i < checkpoints.length; i++) {
-    items.push(formatCheckpointLabel(checkpoints[i], i));
+    items.push(formatCheckpointLabel(checkpoints[i], i, state));
   }
 
   const choice = await ctx.ui.select("Rewind to checkpoint:", items);
@@ -314,7 +320,7 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
         return;
       }
 
-      const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i));
+      const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state));
       const choice = await ctx.ui.select("Quick rewind (files only):", items);
       if (!choice) return;
 

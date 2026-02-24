@@ -24,6 +24,27 @@ import { createInitialState, resetState } from "./state.js";
 import { updateStatus, clearStatus } from "./ui.js";
 import { registerCommands, handleForkRestore, handleTreeRestore } from "./commands.js";
 
+/** Truncate a string to maxLen, adding ellipsis if needed */
+function truncate(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen - 1) + "…";
+}
+
+/** Extract a human-readable description from a tool_call event */
+function describeToolCall(toolName: string, input: any): string {
+  if (!input) return toolName;
+  switch (toolName) {
+    case "write":
+      return `write → ${input.path || "?"}`;
+    case "edit":
+      return `edit → ${input.path || "?"}`;
+    case "bash":
+      return `bash: ${truncate(String(input.command || ""), 50)}`;
+    default:
+      return toolName;
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   const state = createInitialState();
 
@@ -70,6 +91,7 @@ export default function (pi: ExtensionAPI) {
       });
       state.resumeCheckpoint = cp;
       state.checkpoints.set(cp.id, cp);
+      state.descriptions.set(cp.id, "Session start");
     } catch {
       // Resume checkpoint is optional
     }
@@ -87,8 +109,26 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_fork", async (_event, ctx) => {
     if (!state.gitAvailable) return;
-    // Update session ID after fork
     state.sessionId = ctx.sessionManager.getSessionId();
+  });
+
+  // ========================================================================
+  // Capture user prompt for checkpoint labels
+  // ========================================================================
+
+  pi.on("before_agent_start", async (event, _ctx) => {
+    state.currentPrompt = truncate(String(event.prompt || ""), 60);
+  });
+
+  // ========================================================================
+  // Capture tool args for checkpoint labels
+  // ========================================================================
+
+  pi.on("tool_call", async (event, _ctx) => {
+    if (MUTATING_TOOLS.has(event.toolName)) {
+      const desc = describeToolCall(event.toolName, event.input);
+      state.pendingToolInfo.set(event.toolCallId, desc);
+    }
   });
 
   // ========================================================================
@@ -98,6 +138,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_start", async (event, ctx) => {
     if (!ctx.hasUI || !state.gitAvailable || state.failed) return;
     if (!state.repoRoot || !state.sessionId) return;
+
+    state.currentTurnIndex = event.turnIndex;
 
     state.pending = (async () => {
       try {
@@ -110,6 +152,11 @@ export default function (pi: ExtensionAPI) {
           turnIndex: event.turnIndex,
         });
         state.checkpoints.set(cp.id, cp);
+        // Use prompt if available, otherwise generic label
+        const desc = state.currentPrompt
+          ? `"${state.currentPrompt}"`
+          : `Turn ${event.turnIndex}`;
+        state.descriptions.set(cp.id, desc);
         updateStatus(state, ctx);
       } catch {
         state.failed = true;
@@ -129,6 +176,11 @@ export default function (pi: ExtensionAPI) {
     // Wait for any pending turn checkpoint first
     if (state.pending) await state.pending;
 
+    // Get the description captured from tool_call
+    const desc = state.pendingToolInfo.get(event.toolCallId)
+      || `${event.toolName}`;
+    state.pendingToolInfo.delete(event.toolCallId);
+
     state.pending = (async () => {
       try {
         const ts = Date.now();
@@ -138,10 +190,11 @@ export default function (pi: ExtensionAPI) {
           id,
           sessionId: state.sessionId!,
           trigger: "tool",
-          turnIndex: -1, // Unknown at this point
+          turnIndex: state.currentTurnIndex,
           toolName: event.toolName,
         });
         state.checkpoints.set(cp.id, cp);
+        state.descriptions.set(cp.id, `→ ${desc}`);
         updateStatus(state, ctx);
       } catch {
         // Don't set failed for tool checkpoints — transient errors are OK
@@ -156,7 +209,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async (_event, _ctx) => {
     if (!state.gitAvailable || !state.repoRoot || !state.sessionId) return;
 
-    // Wait for pending checkpoint
     if (state.pending) await state.pending;
 
     try {
@@ -166,7 +218,6 @@ export default function (pi: ExtensionAPI) {
         DEFAULT_MAX_CHECKPOINTS,
       );
       if (pruned > 0) {
-        // Rebuild in-memory cache after pruning
         const remaining = await loadAllCheckpoints(state.repoRoot, state.sessionId);
         state.checkpoints.clear();
         for (const cp of remaining) {
@@ -195,7 +246,6 @@ export default function (pi: ExtensionAPI) {
   // ========================================================================
 
   pi.on("session_shutdown", async () => {
-    // Ensure pending checkpoints complete
     if (state.pending) await state.pending;
   });
 }
