@@ -15,8 +15,6 @@ export interface RewindState {
   sessionId: string | null;
   /** In-memory checkpoint cache: checkpoint ID → data */
   checkpoints: Map<string, CheckpointData>;
-  /** Human-readable descriptions: checkpoint ID → description */
-  descriptions: Map<string, string>;
   /** Checkpoint taken at session start (fallback for restore) */
   resumeCheckpoint: CheckpointData | null;
   /** Stack of before-restore checkpoints for undo */
@@ -31,6 +29,12 @@ export interface RewindState {
   currentPrompt: string;
   /** Pending tool info captured from tool_call (before execution ends) */
   pendingToolInfo: Map<string, string>;
+  /** Debounce timer for coalescing rapid tool checkpoints */
+  debounceTimer: ReturnType<typeof setTimeout> | null;
+  /** Tool descriptions accumulated during the debounce window */
+  debounceDescriptions: string[];
+  /** Cached ctx for the debounce flush */
+  debounceCtx: any;
 }
 
 export function createInitialState(): RewindState {
@@ -39,7 +43,6 @@ export function createInitialState(): RewindState {
     repoRoot: null,
     sessionId: null,
     checkpoints: new Map(),
-    descriptions: new Map(),
     resumeCheckpoint: null,
     redoStack: [],
     failed: false,
@@ -47,15 +50,18 @@ export function createInitialState(): RewindState {
     currentTurnIndex: 0,
     currentPrompt: "",
     pendingToolInfo: new Map(),
+    debounceTimer: null,
+    debounceDescriptions: [],
+    debounceCtx: null,
   };
 }
 
 export function resetState(state: RewindState): void {
+  if (state.debounceTimer) clearTimeout(state.debounceTimer);
   state.gitAvailable = false;
   state.repoRoot = null;
   state.sessionId = null;
   state.checkpoints.clear();
-  state.descriptions.clear();
   state.resumeCheckpoint = null;
   state.redoStack = [];
   state.failed = false;
@@ -63,4 +69,7 @@ export function resetState(state: RewindState): void {
   state.currentTurnIndex = 0;
   state.currentPrompt = "";
   state.pendingToolInfo.clear();
+  state.debounceTimer = null;
+  state.debounceDescriptions = [];
+  state.debounceCtx = null;
 }

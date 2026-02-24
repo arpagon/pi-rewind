@@ -4,6 +4,13 @@
  * Automatic git-based checkpoints with per-tool granularity.
  * Creates snapshots of your working tree so you can rewind when the AI makes mistakes.
  *
+ * Checkpoint strategy (inspired by Cline & OpenCode research):
+ *   - 1 resume checkpoint on session start
+ *   - 1 debounced checkpoint per burst of mutating tools (write/edit/bash)
+ *   - Debounce window: 2s — rapid tools coalesce into a single snapshot
+ *   - Flush any pending checkpoint at turn_end
+ *   - No per-turn checkpoints (redundant with tool checkpoints)
+ *
  * Usage:
  *   pi -e ./src/index.ts
  *   pi install github.com/arpagon/pi-rewind
@@ -23,6 +30,9 @@ import {
 import { createInitialState, resetState } from "./state.js";
 import { updateStatus, clearStatus } from "./ui.js";
 import { registerCommands, handleForkRestore, handleTreeRestore } from "./commands.js";
+
+/** Debounce window in ms — tools firing within this window coalesce */
+const DEBOUNCE_MS = 2000;
 
 /** Truncate a string to maxLen, adding ellipsis if needed */
 function truncate(s: string, maxLen: number): string {
@@ -50,6 +60,67 @@ export default function (pi: ExtensionAPI) {
 
   // Register /rewind command and Esc+Esc shortcut
   registerCommands(pi, state);
+
+  // ========================================================================
+  // Debounced checkpoint creation
+  // ========================================================================
+
+  /**
+   * Flush the debounce buffer — creates one checkpoint with all accumulated
+   * tool descriptions since the last checkpoint.
+   */
+  async function flushDebounce(): Promise<void> {
+    if (state.debounceTimer) {
+      clearTimeout(state.debounceTimer);
+      state.debounceTimer = null;
+    }
+
+    const descriptions = state.debounceDescriptions.splice(0);
+    const ctx = state.debounceCtx;
+    if (descriptions.length === 0) return;
+    if (!state.repoRoot || !state.sessionId) return;
+
+    // Wait for any in-flight checkpoint
+    if (state.pending) await state.pending;
+
+    // Build description: show prompt + tool list
+    const promptLabel = state.currentPrompt ? `"${state.currentPrompt}"` : "";
+    const toolsLabel = descriptions.join(", ");
+    const desc = promptLabel
+      ? `${promptLabel} → ${toolsLabel}`
+      : toolsLabel;
+
+    state.pending = (async () => {
+      try {
+        const ts = Date.now();
+        const id = `tool-${state.sessionId}-${ts}`;
+        const cp = await createCheckpoint({
+          root: state.repoRoot!,
+          id,
+          sessionId: state.sessionId!,
+          trigger: "tool",
+          turnIndex: state.currentTurnIndex,
+          description: desc,
+        });
+        state.checkpoints.set(cp.id, cp);
+        if (ctx) updateStatus(state, ctx);
+      } catch {
+        // Tool checkpoint failures are non-fatal
+      }
+    })();
+  }
+
+  /**
+   * Schedule a debounced checkpoint. Accumulates tool descriptions and
+   * creates one checkpoint when the burst of tools settles.
+   */
+  function scheduleCheckpoint(toolDesc: string, ctx: any): void {
+    state.debounceDescriptions.push(toolDesc);
+    state.debounceCtx = ctx;
+
+    if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    state.debounceTimer = setTimeout(() => flushDebounce(), DEBOUNCE_MS);
+  }
 
   // ========================================================================
   // Session lifecycle
@@ -121,6 +192,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ========================================================================
+  // Track turn index (no checkpoint — just bookkeeping)
+  // ========================================================================
+
+  pi.on("turn_start", async (event, _ctx) => {
+    state.currentTurnIndex = event.turnIndex;
+  });
+
+  // ========================================================================
   // Capture tool args for checkpoint labels
   // ========================================================================
 
@@ -132,39 +211,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ========================================================================
-  // Per-turn checkpointing
-  // ========================================================================
-
-  pi.on("turn_start", async (event, ctx) => {
-    if (!ctx.hasUI || !state.gitAvailable || state.failed) return;
-    if (!state.repoRoot || !state.sessionId) return;
-
-    state.currentTurnIndex = event.turnIndex;
-
-    state.pending = (async () => {
-      try {
-        const id = `turn-${state.sessionId}-${event.turnIndex}-${event.timestamp}`;
-        const desc = state.currentPrompt
-          ? `"${state.currentPrompt}"`
-          : `Turn ${event.turnIndex}`;
-        const cp = await createCheckpoint({
-          root: state.repoRoot!,
-          id,
-          sessionId: state.sessionId!,
-          trigger: "turn",
-          turnIndex: event.turnIndex,
-          description: desc,
-        });
-        state.checkpoints.set(cp.id, cp);
-        updateStatus(state, ctx);
-      } catch {
-        state.failed = true;
-      }
-    })();
-  });
-
-  // ========================================================================
-  // Per-tool checkpointing (after each write/edit/bash)
+  // Per-tool checkpointing (debounced — coalesces rapid tool bursts)
   // ========================================================================
 
   pi.on("tool_execution_end", async (event, ctx) => {
@@ -172,42 +219,25 @@ export default function (pi: ExtensionAPI) {
     if (!state.repoRoot || !state.sessionId) return;
     if (!MUTATING_TOOLS.has(event.toolName)) return;
 
-    // Wait for any pending turn checkpoint first
-    if (state.pending) await state.pending;
-
     // Get the description captured from tool_call
     const toolDesc = state.pendingToolInfo.get(event.toolCallId)
-      || `${event.toolName}`;
+      || event.toolName;
     state.pendingToolInfo.delete(event.toolCallId);
 
-    state.pending = (async () => {
-      try {
-        const ts = Date.now();
-        const id = `tool-${state.sessionId}-${sanitizeForRef(event.toolCallId)}-${ts}`;
-        const cp = await createCheckpoint({
-          root: state.repoRoot!,
-          id,
-          sessionId: state.sessionId!,
-          trigger: "tool",
-          turnIndex: state.currentTurnIndex,
-          toolName: event.toolName,
-          description: `→ ${toolDesc}`,
-        });
-        state.checkpoints.set(cp.id, cp);
-        updateStatus(state, ctx);
-      } catch {
-        // Don't set failed for tool checkpoints — transient errors are OK
-      }
-    })();
+    scheduleCheckpoint(toolDesc, ctx);
   });
 
   // ========================================================================
-  // Auto-pruning at turn end
+  // Flush + auto-prune at turn end
   // ========================================================================
 
   pi.on("turn_end", async (_event, _ctx) => {
     if (!state.gitAvailable || !state.repoRoot || !state.sessionId) return;
 
+    // Flush any pending debounced checkpoint
+    await flushDebounce();
+
+    // Wait for in-flight checkpoint
     if (state.pending) await state.pending;
 
     try {
@@ -245,6 +275,7 @@ export default function (pi: ExtensionAPI) {
   // ========================================================================
 
   pi.on("session_shutdown", async () => {
+    await flushDebounce();
     if (state.pending) await state.pending;
   });
 }
