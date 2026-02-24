@@ -19,6 +19,7 @@ Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CL
 - [x] Redo stack (multi-level undo) — "↩ Undo last rewind" in all flows
 - [x] Restore options: files + conversation, files only, conversation only
 - [x] Safe restore — never deletes `node_modules`, `.venv`, or large files
+- [x] Branch safety — blocks cross-branch restore (avoids OpenCode bug)
 - [x] Smart filtering — excludes 13 dir patterns, files >10MiB, dirs >200 files
 - [x] Git-based checkpoints stored as refs (survives restarts)
 - [x] Footer status indicator (`◆ X checkpoints`)
@@ -47,13 +48,13 @@ Two-layer split: `core.ts` is pure git operations with zero Pi dependency (indep
 
 ```
 src/
-├── core.ts       # 646 LOC — git operations, filtering, safe restore
-├── index.ts      # 201 LOC — Pi event hooks, checkpoint scheduling
-├── commands.ts   # 328 LOC — /rewind, Esc+Esc, fork/tree handlers
-├── state.ts      #  50 LOC — shared mutable state
+├── core.ts       # 670 LOC — git operations, filtering, safe restore, branch safety
+├── index.ts      # 253 LOC — Pi event hooks, checkpoint scheduling
+├── commands.ts   # 339 LOC — /rewind, Esc+Esc, fork/tree handlers
+├── state.ts      #  70 LOC — shared mutable state
 └── ui.ts         #  33 LOC — footer status indicator
 tests/
-└── core.test.ts  # 327 LOC — 19 tests passing
+└── core.test.ts  # 362 LOC — 20 tests passing
 ```
 
 ## Development

@@ -226,8 +226,8 @@
 
 <!-- ═══════════ KPI ═══════════ -->
 <div class="kpi-row">
-  <div class="kpi-card as" style="--i:3"><div class="kpi-card__value" style="color:var(--accent)">1,676</div><div class="kpi-card__label">Lines of Code</div></div>
-  <div class="kpi-card as" style="--i:4"><div class="kpi-card__value" style="color:var(--green)">19</div><div class="kpi-card__label">Tests Passing</div></div>
+  <div class="kpi-card as" style="--i:3"><div class="kpi-card__value" style="color:var(--accent)">1,727</div><div class="kpi-card__label">Lines of Code</div></div>
+  <div class="kpi-card as" style="--i:4"><div class="kpi-card__value" style="color:var(--green)">20</div><div class="kpi-card__label">Tests Passing</div></div>
   <div class="kpi-card as" style="--i:5"><div class="kpi-card__value">5</div><div class="kpi-card__label">Source Files</div></div>
   <div class="kpi-card as" style="--i:6"><div class="kpi-card__value" style="color:var(--cyan)">0</div><div class="kpi-card__label">Dependencies</div></div>
 </div>
@@ -271,6 +271,7 @@
         <tr style="--i:5"><td class="wide">Restore modes<small>Files + conversation, files only, conversation only</small></td><td>Picker menu</td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:6"><td class="wide">Redo stack<small>Multi-level undo of rewinds</small></td><td>"↩ Undo last rewind"</td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:7"><td class="wide">Safe restore<small>Never deletes node_modules, .venv, large files</small></td><td>Automatic</td><td><span class="s s-g">Done</span></td></tr>
+        <tr style="--i:8"><td class="wide">Branch safety<small>Blocks cross-branch restore (avoids OpenCode bug)</small></td><td>Automatic</td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:8"><td class="wide">Smart filtering<small>Ignores 13 dir patterns + files &gt;10MiB + dirs &gt;200 files</small></td><td>Automatic</td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:9"><td class="wide">Resume checkpoint<small>Snapshot on session start for fallback</small></td><td><code>session_start</code></td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:10"><td class="wide">Footer status<small><code>◆ 5 checkpoints</code> in footer</small></td><td>Automatic</td><td><span class="s s-g">Done</span></td></tr>
@@ -308,7 +309,7 @@
     <h3>🧪 Testing</h3>
     <ul>
       <li><code>tests/core.test.ts</code> — 327 LOC</li>
-      <li>19 tests covering: utils, git helpers, CRUD, snapshot/restore, safe restore, tool checkpoints, pruning</li>
+      <li>20 tests covering: utils, git helpers, CRUD, snapshot/restore, safe restore, branch safety, tool checkpoints, pruning</li>
       <li>Runs on disposable temp repos — no fixtures</li>
       <li><code>npx tsx tests/core.test.ts</code></li>
     </ul>
@@ -511,6 +512,7 @@ flowchart LR
         <tr style="--i:4"><td class="wide">Diff preview before restore</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:5"><td class="wide">Redo stack (multi-level undo)</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:6"><td class="wide">Safe restore (preserve untracked)</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:7"><td class="wide">Branch safety (cross-branch protection)</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td><td>N/A (shadow git)</td></tr>
         <tr style="--i:7"><td class="wide">Smart filtering (13 dirs, large files)</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:8"><td class="wide">HEAD + index + worktree capture</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:9"><td class="wide">Resume checkpoint (session start)</td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
