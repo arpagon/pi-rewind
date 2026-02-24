@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>checkpoint-pi vs pi-rewind-hook — Deep Comparison</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --font-body: 'Space Grotesk', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    --bg: #f7f8fc;
+    --surface: #ffffff;
+    --surface2: #f0f1f8;
+    --surface-elevated: #ffffff;
+    --border: rgba(0, 0, 0, 0.07);
+    --border-bright: rgba(0, 0, 0, 0.14);
+    --text: #111827;
+    --text-dim: #6b7280;
+    --accent: #6366f1;
+    --accent-dim: rgba(99, 102, 241, 0.07);
+    --green: #059669;
+    --green-dim: rgba(5, 150, 105, 0.08);
+    --red: #dc2626;
+    --red-dim: rgba(220, 38, 38, 0.08);
+    --orange: #d97706;
+    --orange-dim: rgba(217, 119, 6, 0.08);
+    --blue: #2563eb;
+    --blue-dim: rgba(37, 99, 235, 0.08);
+    --purple: #7c3aed;
+    --purple-dim: rgba(124, 58, 237, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0d14;
+      --surface: #14151f;
+      --surface2: #1c1d2e;
+      --surface-elevated: #1e1f32;
+      --border: rgba(255, 255, 255, 0.06);
+      --border-bright: rgba(255, 255, 255, 0.12);
+      --text: #e5e7eb;
+      --text-dim: #9ca3af;
+      --accent: #818cf8;
+      --accent-dim: rgba(129, 140, 248, 0.12);
+      --green: #34d399;
+      --green-dim: rgba(52, 211, 153, 0.1);
+      --red: #f87171;
+      --red-dim: rgba(248, 113, 113, 0.1);
+      --orange: #fbbf24;
+      --orange-dim: rgba(251, 191, 36, 0.1);
+      --blue: #60a5fa;
+      --blue-dim: rgba(96, 165, 250, 0.1);
+      --purple: #a78bfa;
+      --purple-dim: rgba(167, 139, 250, 0.1);
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    background-image:
+      radial-gradient(ellipse at 25% 0%, var(--accent-dim) 0%, transparent 50%),
+      radial-gradient(ellipse at 75% 100%, var(--purple-dim) 0%, transparent 40%);
+    color: var(--text);
+    font-family: var(--font-body);
+    padding: 40px;
+    min-height: 100vh;
+  }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fadeScale { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+  .a { animation: fadeUp 0.35s ease-out both; animation-delay: calc(var(--i, 0) * 0.04s); }
+  .as { animation: fadeScale 0.35s ease-out both; animation-delay: calc(var(--i, 0) * 0.06s); }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+  .wrap { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 170px 1fr; gap: 0 40px; }
+  .main { min-width: 0; }
+
+  /* TOC */
+  .toc { position: sticky; top: 24px; align-self: start; padding: 14px 0; grid-row: 1 / -1; max-height: calc(100dvh - 48px); overflow-y: auto; }
+  .toc::-webkit-scrollbar { width: 3px; }
+  .toc::-webkit-scrollbar-thumb { background: var(--surface-elevated); border-radius: 2px; }
+  .toc-title { font-family: var(--font-mono); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--text-dim); padding: 0 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .toc a { display: block; font-size: 11px; color: var(--text-dim); text-decoration: none; padding: 4px 8px; border-radius: 5px; border-left: 2px solid transparent; transition: all 0.15s; line-height: 1.4; margin-bottom: 1px; }
+  .toc a:hover { color: var(--text); background: var(--surface2); }
+  .toc a.active { color: var(--text); border-left-color: var(--accent); }
+
+  @media (max-width: 1000px) {
+    .wrap { grid-template-columns: 1fr; padding-top: 0; }
+    body { padding-top: 0; }
+    .toc { position: sticky; top: 0; z-index: 200; max-height: none; display: flex; gap: 4px; align-items: center; overflow-x: auto; -webkit-overflow-scrolling: touch; background: var(--bg); border-bottom: 1px solid var(--border); padding: 10px 0; margin: 0 -40px; padding-left: 40px; padding-right: 40px; grid-row: auto; }
+    .toc::-webkit-scrollbar { display: none; }
+    .toc-title { display: none; }
+    .toc a { white-space: nowrap; flex-shrink: 0; border-left: none; border-bottom: 2px solid transparent; border-radius: 4px 4px 0 0; padding: 6px 10px; font-size: 10px; }
+    .toc a.active { border-left: none; border-bottom-color: var(--accent); background: var(--surface); }
+    .main { padding-top: 20px; }
+    .sec-head { scroll-margin-top: 52px; }
+  }
+
+  h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
+  .subtitle { color: var(--text-dim); font-family: var(--font-mono); font-size: 12px; margin-bottom: 32px; }
+  .sec-head { font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent); padding: 24px 0 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+
+  /* KPI */
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin-bottom: 28px; }
+  .kpi-card { background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .kpi-card__value { font-size: 32px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .kpi-card__label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); margin-top: 6px; }
+
+  /* Tables */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 24px; }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.55; }
+  .data-table thead { position: sticky; top: 0; z-index: 2; }
+  .data-table th { background: var(--surface2); font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim); text-align: left; padding: 14px 16px; border-bottom: 2px solid var(--border-bright); white-space: nowrap; }
+  .data-table td { padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .data-table tbody tr:last-child td { border-bottom: none; }
+  .data-table .wide { min-width: 200px; max-width: 440px; }
+  .data-table tbody tr:nth-child(even) { background: var(--accent-dim); }
+  .data-table tbody tr { transition: background 0.15s ease; animation: fadeUp 0.35s ease-out both; animation-delay: calc(var(--i, 0) * 0.04s); }
+  .data-table tbody tr:hover { background: var(--border); }
+  .data-table code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+  .data-table small { display: block; color: var(--text-dim); font-size: 11px; margin-top: 3px; }
+  .data-table tfoot td { background: var(--surface2); font-weight: 600; font-family: var(--font-mono); font-size: 12px; border-top: 2px solid var(--border-bright); border-bottom: none; padding: 14px 16px; }
+
+  /* Status */
+  .s { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 6px; white-space: nowrap; letter-spacing: 0.3px; }
+  .s::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .s-g { background: var(--green-dim); color: var(--green); }
+  .s-r { background: var(--red-dim); color: var(--red); }
+  .s-o { background: var(--orange-dim); color: var(--orange); }
+  .s-b { background: var(--blue-dim); color: var(--blue); }
+  .s-p { background: var(--purple-dim); color: var(--purple); }
+
+  /* Cards */
+  .node { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .node--hero { background: color-mix(in srgb, var(--surface) 92%, var(--accent) 8%); box-shadow: 0 4px 20px rgba(0,0,0,0.08); border-color: color-mix(in srgb, var(--border) 50%, var(--accent) 50%); }
+  .node h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+  .node p, .node li { font-size: 13px; line-height: 1.7; color: var(--text-dim); }
+  .node ul { padding-left: 0; list-style: none; }
+  .node li { padding-left: 14px; position: relative; margin-bottom: 4px; }
+  .node li::before { content: '›'; color: var(--accent); font-weight: 600; position: absolute; left: 0; }
+
+  /* Comparison grid */
+  .vs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .vs-grid > * { min-width: 0; overflow-wrap: break-word; }
+  @media (max-width: 768px) { .vs-grid { grid-template-columns: 1fr; } body { padding: 16px; } h1 { font-size: 24px; } }
+
+  .vs-header { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; padding: 10px 16px; border-radius: 8px 8px 0 0; }
+  .vs-header--a { background: var(--blue-dim); color: var(--blue); }
+  .vs-header--b { background: var(--purple-dim); color: var(--purple); }
+
+  details.collapsible { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
+  details.collapsible summary { padding: 14px 20px; background: var(--surface); font-family: var(--font-mono); font-size: 12px; font-weight: 600; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; color: var(--text); transition: background 0.15s ease; }
+  details.collapsible summary:hover { background: var(--surface-elevated); }
+  details.collapsible summary::-webkit-details-marker { display: none; }
+  details.collapsible summary::before { content: '▸'; font-size: 11px; color: var(--text-dim); transition: transform 0.15s ease; }
+  details.collapsible[open] summary::before { transform: rotate(90deg); }
+  details.collapsible .cb { padding: 16px 20px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.6; color: var(--text-dim); }
+  details.collapsible .cb strong { color: var(--text); }
+  details.collapsible .cb code { font-family: var(--font-mono); font-size: 11px; background: var(--accent-dim); color: var(--accent); padding: 1px 5px; border-radius: 3px; }
+
+  .rec { border-left: 3px solid var(--accent); padding-left: 16px; margin: 16px 0; }
+  .rec p { font-size: 14px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="toc" id="toc">
+  <div class="toc-title">Contents</div>
+  <a href="#s1">1. At a Glance</a>
+  <a href="#s2">2. Architecture</a>
+  <a href="#s3">3. Feature Matrix</a>
+  <a href="#s4">4. Code Comparison</a>
+  <a href="#s5">5. vs Best-in-Class</a>
+  <a href="#s6">6. Gaps to Close</a>
+  <a href="#s7">7. Recommendation</a>
+</nav>
+
+<div class="main">
+
+<h1 class="a" style="--i:0">checkpoint-pi vs pi-rewind-hook</h1>
+<p class="subtitle a" style="--i:1">Deep comparison of Pi's two checkpoint extensions — and what to build next</p>
+
+<!-- ═══════════ KPI ═══════════ -->
+<div class="kpi-row">
+  <div class="kpi-card as" style="--i:1"><div class="kpi-card__value" style="color:var(--blue)">1,399</div><div class="kpi-card__label">checkpoint-pi LOC</div></div>
+  <div class="kpi-card as" style="--i:2"><div class="kpi-card__value" style="color:var(--purple)">610</div><div class="kpi-card__label">pi-rewind-hook LOC</div></div>
+  <div class="kpi-card as" style="--i:3"><div class="kpi-card__value">2</div><div class="kpi-card__label">Source Files (CP)</div></div>
+  <div class="kpi-card as" style="--i:4"><div class="kpi-card__value">1</div><div class="kpi-card__label">Source File (RW)</div></div>
+  <div class="kpi-card as" style="--i:5"><div class="kpi-card__value" style="color:var(--green)">Yes</div><div class="kpi-card__label">Both Extensions</div></div>
+</div>
+
+<!-- ═══════════ 1 ═══════════ -->
+<div id="s1" class="sec-head a" style="--i:6">1 — At a Glance</div>
+
+<div class="vs-grid">
+  <div>
+    <div class="vs-header vs-header--a">checkpoint-pi</div>
+    <div class="node a" style="--i:7">
+      <h3>checkpoint-pi <span class="s s-b">v1.0.2</span></h3>
+      <ul>
+        <li>Author: <strong>prateekmedia</strong> (pi-hooks repo, ⭐32)</li>
+        <li>2 files: <code>checkpoint.ts</code> (492 LOC) + <code>checkpoint-core.ts</code> (907 LOC)</li>
+        <li>Unit tests: <strong>Yes</strong> — <code>checkpoint.test.ts</code> (906 lines)</li>
+        <li>Install: <code>pi install npm:checkpoint-pi</code></li>
+        <li>Separation of concerns: core logic decoupled from pi API</li>
+      </ul>
+    </div>
+  </div>
+  <div>
+    <div class="vs-header vs-header--b">pi-rewind-hook</div>
+    <div class="node a" style="--i:8">
+      <h3>pi-rewind-hook <span class="s s-p">v1.7.3</span></h3>
+      <ul>
+        <li>Author: <strong>nicobailon</strong> (⭐50)</li>
+        <li>1 file: <code>index.ts</code> (610 LOC)</li>
+        <li>Unit tests: <strong>No</strong></li>
+        <li>Install: <code>pi install npm:pi-rewind-hook</code></li>
+        <li>Monolithic single-file, all logic coupled to pi API</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 2 ═══════════ -->
+<div id="s2" class="sec-head a" style="--i:9">2 — Architecture</div>
+
+<div class="vs-grid">
+  <div class="node a" style="--i:10">
+    <h3 style="color:var(--blue)">checkpoint-pi Architecture</h3>
+    <p><strong>Two-layer design:</strong></p>
+    <ul>
+      <li><code>checkpoint-core.ts</code> — Pure git operations, zero pi dependency. Testable in isolation.</li>
+      <li><code>checkpoint.ts</code> — Pi extension glue: event handlers, UI prompts, session management.</li>
+    </ul>
+    <p style="margin-top:12px"><strong>Checkpoint data stored as structured commit messages:</strong></p>
+    <ul>
+      <li>HEAD SHA, index tree SHA, worktree tree SHA</li>
+      <li>Session ID, turn index, timestamp</li>
+      <li>Pre-existing untracked files list (JSON)</li>
+      <li>Skipped large files & dirs lists (JSON)</li>
+    </ul>
+    <p style="margin-top:12px"><strong>Restore is a 4-step process:</strong><br>
+    <code>reset --hard HEAD</code> → <code>read-tree -u worktree</code> → safe clean → <code>read-tree index</code></p>
+  </div>
+  <div class="node a" style="--i:11">
+    <h3 style="color:var(--purple)">pi-rewind-hook Architecture</h3>
+    <p><strong>Single-file monolith:</strong></p>
+    <ul>
+      <li>Everything in one <code>index.ts</code> — git ops, pi events, UI, state.</li>
+      <li>Not independently testable without pi runtime.</li>
+    </ul>
+    <p style="margin-top:12px"><strong>Checkpoint data stored as simple commit objects:</strong></p>
+    <ul>
+      <li>Only worktree commit SHA stored via <code>update-ref</code></li>
+      <li>No index tree, no HEAD SHA, no metadata</li>
+      <li>Ref naming: <code>checkpoint-{sessionId}-{timestamp}-{entryId}</code></li>
+    </ul>
+    <p style="margin-top:12px"><strong>Restore is a 1-step process:</strong><br>
+    <code>git checkout {ref} -- .</code></p>
+  </div>
+</div>
+
+<!-- ═══════════ 3 ═══════════ -->
+<div id="s3" class="sec-head a" style="--i:12">3 — Feature Matrix</div>
+
+<div class="table-wrap a" style="--i:13">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th class="wide">Feature</th>
+          <th>checkpoint-pi</th>
+          <th>pi-rewind-hook</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="--i:14"><td class="wide">Captures HEAD SHA</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td></tr>
+        <tr style="--i:15"><td class="wide">Captures index (staged) state</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td></tr>
+        <tr style="--i:16"><td class="wide">Captures worktree state</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:17"><td class="wide">Captures untracked files</td><td><span class="s s-g">Yes</span> <small>With smart filtering</small></td><td><span class="s s-g">Yes</span> <small>All via <code>git add -A</code></small></td></tr>
+        <tr style="--i:18"><td class="wide">Excludes node_modules, .venv, etc.</td><td><span class="s s-g">Yes</span> <small>13 dir patterns</small></td><td><span class="s s-r">No</span> <small>Captures everything</small></td></tr>
+        <tr style="--i:19"><td class="wide">Excludes large files (&gt;10MiB)</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td></tr>
+        <tr style="--i:20"><td class="wide">Excludes large dirs (&gt;200 files)</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td></tr>
+        <tr style="--i:21"><td class="wide">Safe restore (never deletes ignored dirs)</td><td><span class="s s-g">Yes</span> <small>Preserves pre-existing untracked</small></td><td><span class="s s-r">No</span> <small><code>checkout -- .</code> may overwrite</small></td></tr>
+        <tr style="--i:22"><td class="wide">Restore: files + conversation</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:23"><td class="wide">Restore: conversation only</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:24"><td class="wide">Restore: code only</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:25"><td class="wide">Undo last rewind</td><td><span class="s s-g">Yes</span> <small>Before-restore checkpoint</small></td><td><span class="s s-g">Yes</span> <small>Before-restore + explicit menu option</small></td></tr>
+        <tr style="--i:26"><td class="wide">Resume checkpoint (session start)</td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span> <small>Dedicated resume checkpoint</small></td></tr>
+        <tr style="--i:27"><td class="wide">Footer status indicator</td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span> <small><code>◆ X checkpoints</code></small></td></tr>
+        <tr style="--i:28"><td class="wide">Checkpoint saved notification</td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span> <small>Configurable silent mode</small></td></tr>
+        <tr style="--i:29"><td class="wide">Silent mode config</td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span> <small><code>silentCheckpoints: true</code></small></td></tr>
+        <tr style="--i:30"><td class="wide">Max checkpoints (auto-prune)</td><td><span class="s s-o">Unlimited</span> <small>No pruning</small></td><td><span class="s s-g">100</span> <small>Per session, auto-pruned</small></td></tr>
+        <tr style="--i:31"><td class="wide">Fork lineage support (parent sessions)</td><td><span class="s s-g">Yes</span> <small>Walks parentSession chain up to 50 deep</small></td><td><span class="s s-r">No</span> <small>Current session only</small></td></tr>
+        <tr style="--i:32"><td class="wide">Checkpoint per every turn</td><td><span class="s s-g">Yes</span> <small>All turns</small></td><td><span class="s s-o">Partial</span> <small>Only <code>turnIndex === 0</code></small></td></tr>
+        <tr style="--i:33"><td class="wide">Unit tests</td><td><span class="s s-g">906 lines</span></td><td><span class="s s-r">None</span></td></tr>
+        <tr style="--i:34"><td class="wide">Session-scoped isolation</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:35"><td class="wide">Backward compat (old ref format)</td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span> <small>Reads v1.2 format</small></td></tr>
+      </tbody>
+      <tfoot>
+        <tr><td>22 features compared</td><td><span class="s s-g">15 Yes</span></td><td><span class="s s-g">14 Yes</span></td></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ 4 ═══════════ -->
+<div id="s4" class="sec-head a" style="--i:36">4 — Code Quality Comparison</div>
+
+<div class="table-wrap a" style="--i:37">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr><th class="wide">Aspect</th><th>checkpoint-pi</th><th>pi-rewind-hook</th></tr>
+      </thead>
+      <tbody>
+        <tr style="--i:38"><td>Separation of concerns</td><td><span class="s s-g">Excellent</span><small>Core + extension split</small></td><td><span class="s s-r">Poor</span><small>All in one file</small></td></tr>
+        <tr style="--i:39"><td>Git operations safety</td><td><span class="s s-g">spawn()</span><small>No shell injection</small></td><td><span class="s s-o">execAsync()</span><small>Uses shell for some ops</small></td></tr>
+        <tr style="--i:40"><td>Type safety</td><td><span class="s s-g">Full</span><small>Local interfaces, no hard deps</small></td><td><span class="s s-g">Full</span><small>Imports pi types directly</small></td></tr>
+        <tr style="--i:41"><td>Error handling</td><td><span class="s s-g">Comprehensive</span><small>Graceful fallbacks</small></td><td><span class="s s-g">Silent</span><small>try/catch with silent failures</small></td></tr>
+        <tr style="--i:42"><td>Batch operations</td><td><span class="s s-g">Yes</span><small>100-file batches for git add</small></td><td><span class="s s-r">No</span><small>Single <code>git add -A</code></small></td></tr>
+        <tr style="--i:43"><td>Metadata richness</td><td><span class="s s-g">Rich</span><small>7 fields per checkpoint</small></td><td><span class="s s-o">Basic</span><small>Ref name only</small></td></tr>
+        <tr style="--i:44"><td>Testability</td><td><span class="s s-g">High</span><small>Core has no pi deps</small></td><td><span class="s s-r">Low</span><small>Requires pi runtime</small></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ 5 ═══════════ -->
+<div id="s5" class="sec-head a" style="--i:45">5 — vs Best-in-Class Agents</div>
+
+<p class="a" style="--i:46; margin-bottom:16px; color:var(--text-dim); font-size:13px;">Based on Codex research across 11 coding agents (820K tokens analyzed):</p>
+
+<div class="table-wrap a" style="--i:47">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr><th>#</th><th>Agent</th><th>Feature</th><th>Key Advantage</th><th>Pi Gap?</th></tr>
+      </thead>
+      <tbody>
+        <tr style="--i:48"><td>1</td><td><strong>Cline</strong></td><td>Checkpoints per tool call</td><td>Compare/Restore UI buttons, shadow git</td><td><span class="s s-r">Yes</span></td></tr>
+        <tr style="--i:49"><td>2</td><td><strong>Gemini CLI</strong></td><td><code>/rewind</code> + <code>/restore</code></td><td>Separate rewind & restore commands</td><td><span class="s s-r">Yes</span></td></tr>
+        <tr style="--i:50"><td>3</td><td><strong>Claude Code</strong></td><td><code>/rewind</code> + Esc+Esc</td><td>"Summarize from here" context compression</td><td><span class="s s-r">Yes</span></td></tr>
+        <tr style="--i:51"><td>4</td><td><strong>OpenCode</strong></td><td><code>/undo</code> + <code>/redo</code></td><td>Step-level patches, tracks bash changes</td><td><span class="s s-o">Partial</span></td></tr>
+        <tr style="--i:52"><td>7</td><td><strong>checkpoint-pi</strong></td><td>Fork/tree restore</td><td>Safe restore, smart filtering, tested</td><td>—</td></tr>
+        <tr style="--i:53"><td>8</td><td><strong>pi-rewind-hook</strong></td><td>Fork/tree restore</td><td>Resume checkpoint, status UI, undo last</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ 6 ═══════════ -->
+<div id="s6" class="sec-head a" style="--i:54">6 — Gaps to Close</div>
+
+<div class="node node--hero a" style="--i:55">
+  <h3>What the best agents have that Pi lacks</h3>
+  <ul>
+    <li><strong>No dedicated <code>/rewind</code> command</strong> — Pi relies on <code>/fork</code> and tree navigation. Claude Code, Gemini, and OpenCode all have a direct rewind command.</li>
+    <li><strong>No per-tool checkpointing</strong> — Cline checkpoints after every tool call. Both Pi extensions only checkpoint per turn (or per first turn).</li>
+    <li><strong>No checkpoint browser with diff preview</strong> — Cline shows Compare buttons with full diffs before restoring. Pi shows a text menu.</li>
+    <li><strong>No "Summarize from here"</strong> — Claude Code can compress conversation from a checkpoint forward. Pi's extensions only restore, not summarize.</li>
+    <li><strong>No redo stack</strong> — OpenCode has <code>/redo</code>. Pi extensions only undo the last rewind.</li>
+    <li><strong>No <code>Esc+Esc</code> shortcut</strong> — Claude Code and Gemini CLI use double-escape to trigger rewind instantly.</li>
+  </ul>
+</div>
+
+<details class="collapsible a" style="--i:56">
+  <summary>Pi Extension API feasibility for closing these gaps</summary>
+  <div class="cb">
+    <strong>Per-tool checkpointing:</strong> Pi fires <code>tool_execution_start</code> and <code>tool_execution_end</code> events. An extension can hook these to create checkpoints before/after each tool mutation (write, edit, bash). <strong>Feasible.</strong><br><br>
+    <strong>Dedicated /rewind command:</strong> <code>pi.registerCommand("rewind", ...)</code> is straightforward. The handler can list checkpoints and call <code>ctx.navigateTree()</code> or <code>ctx.fork()</code>. <strong>Feasible.</strong><br><br>
+    <strong>Keyboard shortcut:</strong> <code>pi.registerShortcut("escape escape", ...)</code> — needs testing but the API exists. <strong>Likely feasible.</strong><br><br>
+    <strong>Diff preview:</strong> <code>ctx.ui.custom()</code> supports full TUI components. Could render a diff view before confirming restore. <strong>Feasible but complex.</strong><br><br>
+    <strong>Summarize from here:</strong> <code>ctx.compact({ customInstructions })</code> exists. Could combine rewind + targeted compaction. <strong>Feasible.</strong><br><br>
+    <strong>Redo stack:</strong> Multiple before-restore refs, navigable by index. <strong>Feasible.</strong>
+  </div>
+</details>
+
+<!-- ═══════════ 7 ═══════════ -->
+<div id="s7" class="sec-head a" style="--i:57">7 — Recommendation</div>
+
+<div class="node node--hero a" style="--i:58">
+  <h3>🏗️ Build a custom extension based on checkpoint-pi</h3>
+  <div class="rec">
+    <p><strong>Base:</strong> Fork <code>checkpoint-pi</code>. Its two-layer architecture (core + extension), unit tests, safe restore logic, and smart filtering are objectively superior to pi-rewind-hook's monolithic approach.</p>
+  </div>
+  <div class="rec">
+    <p><strong>Cherry-pick from pi-rewind-hook:</strong> Resume checkpoint on session start, footer status indicator (<code>◆ X checkpoints</code>), checkpoint saved notifications with silent mode, auto-pruning (100 max), and the explicit "Undo last file rewind" menu option. These are all UX wins that checkpoint-pi lacks.</p>
+  </div>
+  <div class="rec">
+    <p><strong>Add to match best-in-class:</strong></p>
+    <ul>
+      <li>Register a <code>/rewind</code> command + <code>Esc+Esc</code> shortcut</li>
+      <li>Per-tool checkpointing via <code>tool_execution_end</code> events (write, edit, bash)</li>
+      <li>Checkpoint browser with diff preview before restore</li>
+      <li>Redo stack (multiple before-restore refs)</li>
+      <li>"Summarize from here" option using <code>ctx.compact()</code></li>
+    </ul>
+  </div>
+</div>
+
+<div class="table-wrap a" style="--i:59">
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>Priority</th><th class="wide">Feature to Build</th><th>Effort</th><th>Impact</th></tr></thead>
+      <tbody>
+        <tr style="--i:60"><td>P0</td><td class="wide">Fork checkpoint-pi + cherry-pick rewind-hook UX</td><td><span class="s s-g">Low</span></td><td><span class="s s-g">High</span></td></tr>
+        <tr style="--i:61"><td>P1</td><td class="wide">Register <code>/rewind</code> command</td><td><span class="s s-g">Low</span></td><td><span class="s s-g">High</span></td></tr>
+        <tr style="--i:62"><td>P1</td><td class="wide">Per-tool checkpointing (<code>tool_execution_end</code>)</td><td><span class="s s-o">Medium</span></td><td><span class="s s-g">High</span></td></tr>
+        <tr style="--i:63"><td>P2</td><td class="wide"><code>Esc+Esc</code> keyboard shortcut</td><td><span class="s s-g">Low</span></td><td><span class="s s-o">Medium</span></td></tr>
+        <tr style="--i:64"><td>P2</td><td class="wide">Redo stack (multi-level undo)</td><td><span class="s s-o">Medium</span></td><td><span class="s s-o">Medium</span></td></tr>
+        <tr style="--i:65"><td>P3</td><td class="wide">Diff preview before restore</td><td><span class="s s-r">High</span></td><td><span class="s s-o">Medium</span></td></tr>
+        <tr style="--i:66"><td>P3</td><td class="wide">"Summarize from here" integration</td><td><span class="s s-o">Medium</span></td><td><span class="s s-o">Medium</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</div><!-- /main -->
+</div><!-- /wrap -->
+
+<script>
+(function() {
+  const toc = document.getElementById('toc');
+  const links = toc.querySelectorAll('a');
+  const sections = [];
+  links.forEach(link => {
+    const id = link.getAttribute('href').slice(1);
+    const el = document.getElementById(id);
+    if (el) sections.push({ id, el, link });
+  });
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const match = sections.find(s => s.el === entry.target);
+        if (match) {
+          match.link.classList.add('active');
+          if (window.innerWidth <= 1000) match.link.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+      }
+    });
+  }, { rootMargin: '-10% 0px -80% 0px' });
+  sections.forEach(s => observer.observe(s.el));
+  links.forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const el = document.getElementById(link.getAttribute('href').slice(1));
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); history.replaceState(null, '', link.getAttribute('href')); }
+    });
+  });
+})();
+</script>
+</body>
+</html>
