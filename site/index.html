@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>pi-rewind — The best checkpoint/rewind for Pi</title>
-<meta name="description" content="Per-tool checkpoints, /rewind command, Esc+Esc shortcut, safe restore, redo stack — the rewind experience Pi deserves.">
+<meta name="description" content="1 checkpoint per turn, /rewind command, Esc+Esc shortcut, safe restore, redo stack — the rewind experience Pi deserves.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -217,7 +217,7 @@
 <div class="main">
 
 <h1 class="a" style="--i:0"><span class="hl">pi-rewind</span></h1>
-<p class="subtitle a" style="--i:1">The rewind experience Pi deserves — per-tool checkpoints, /rewind command, safe restore, redo stack</p>
+<p class="subtitle a" style="--i:1">The rewind experience Pi deserves — 1 checkpoint per turn, /rewind command, safe restore, redo stack</p>
 
 <div class="hero-links a" style="--i:2">
   <a href="https://github.com/arpagon/pi-rewind" class="btn-primary">⌘ GitHub</a>
@@ -226,7 +226,7 @@
 
 <!-- ═══════════ KPI ═══════════ -->
 <div class="kpi-row">
-  <div class="kpi-card as" style="--i:3"><div class="kpi-card__value" style="color:var(--accent)">1,585</div><div class="kpi-card__label">Lines of Code</div></div>
+  <div class="kpi-card as" style="--i:3"><div class="kpi-card__value" style="color:var(--accent)">1,676</div><div class="kpi-card__label">Lines of Code</div></div>
   <div class="kpi-card as" style="--i:4"><div class="kpi-card__value" style="color:var(--green)">19</div><div class="kpi-card__label">Tests Passing</div></div>
   <div class="kpi-card as" style="--i:5"><div class="kpi-card__value">5</div><div class="kpi-card__label">Source Files</div></div>
   <div class="kpi-card as" style="--i:6"><div class="kpi-card__value" style="color:var(--cyan)">0</div><div class="kpi-card__label">Dependencies</div></div>
@@ -264,8 +264,8 @@
     <table class="dt">
       <thead><tr><th class="wide">Feature</th><th>Trigger</th><th>Status</th></tr></thead>
       <tbody>
-        <tr style="--i:1"><td class="wide">Per-tool checkpointing<small>After every write, edit, bash</small></td><td><code>tool_execution_end</code></td><td><span class="s s-g">Done</span></td></tr>
-        <tr style="--i:2"><td class="wide">Per-turn checkpointing<small>Snapshot at start of every turn</small></td><td><code>turn_start</code></td><td><span class="s s-g">Done</span></td></tr>
+        <tr style="--i:1"><td class="wide">1 checkpoint per turn<small>After all tools finish — like Cline. Label: <code>"prompt" → tools</code></small></td><td><code>turn_end</code></td><td><span class="s s-g">Done</span></td></tr>
+        <tr style="--i:2"><td class="wide">Descriptive labels<small>User prompt + tool list persisted in git refs</small></td><td>Automatic</td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:3"><td class="wide"><code>/rewind</code> command<small>Checkpoint browser → diff preview → restore</small></td><td>Type <code>/rewind</code></td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:4"><td class="wide"><code>Esc+Esc</code> shortcut<small>Quick files-only rewind</small></td><td>Double Escape</td><td><span class="s s-g">Done</span></td></tr>
         <tr style="--i:5"><td class="wide">Restore modes<small>Files + conversation, files only, conversation only</small></td><td>Picker menu</td><td><span class="s s-g">Done</span></td></tr>
@@ -297,10 +297,10 @@
   <div class="node a" style="--i:15">
     <h3>📦 Source files</h3>
     <ul>
-      <li><code>src/core.ts</code> — 646 LOC<small>Git operations, filtering, safe restore</small></li>
-      <li><code>src/index.ts</code> — 201 LOC<small>Pi event hooks, checkpoint scheduling</small></li>
-      <li><code>src/commands.ts</code> — 328 LOC<small>/rewind, Esc+Esc, fork/tree handlers</small></li>
-      <li><code>src/state.ts</code> — 50 LOC<small>Shared mutable state</small></li>
+      <li><code>src/core.ts</code> — 654 LOC<small>Git operations, filtering, safe restore</small></li>
+      <li><code>src/index.ts</code> — 253 LOC<small>Pi event hooks, turn-end checkpointing</small></li>
+      <li><code>src/commands.ts</code> — 339 LOC<small>/rewind, Esc+Esc, fork/tree handlers</small></li>
+      <li><code>src/state.ts</code> — 70 LOC<small>Shared mutable state</small></li>
       <li><code>src/ui.ts</code> — 33 LOC<small>Footer status indicator</small></li>
     </ul>
   </div>
@@ -341,22 +341,27 @@
   <pre class="mermaid">
 flowchart TD
     SS["session_start"]:::event --> RC["Create resume checkpoint"]:::checkpoint
-    RC --> STATUS["Update footer: diamond N checkpoints"]:::ui
+    RC --> STATUS["Update footer: ◆ N checkpoints"]:::ui
 
-    TS["turn_start"]:::event --> TC["Create turn checkpoint"]:::checkpoint
-    TC --> STATUS
+    BA["before_agent_start"]:::event --> PROMPT["Capture user prompt"]:::step
+    TC["tool_call"]:::event --> ARGS["Capture tool args (path, cmd)"]:::step
 
     TEE["tool_execution_end"]:::tool --> MUT{"write / edit / bash?"}:::decision
-    MUT -->|"Yes"| TOOLCP["Create tool checkpoint"]:::checkpoint
+    MUT -->|"Yes"| ACC["Accumulate description"]:::step
     MUT -->|"No (read, grep...)"| SKIP["Skip"]:::skip
-    TOOLCP --> STATUS
 
-    TEND["turn_end"]:::event --> PRUNE["Auto-prune if > 100"]:::prune
+    TEND["turn_end"]:::event --> HAD{"Had mutations?"}:::decision
+    HAD -->|"No"| SKIP2["Skip — no checkpoint needed"]:::skip
+    HAD -->|"Yes"| CREATE["Create 1 checkpoint"]:::checkpoint
+    CREATE --> DESC["Label: prompt + all tools"]:::step
+    DESC --> STATUS
+    CREATE --> PRUNE["Auto-prune if > 100"]:::prune
 
     classDef event fill:#1e1f32,stroke:#818cf8,stroke-width:2px,color:#e5e7eb
     classDef checkpoint fill:#0c3d2e,stroke:#34d399,stroke-width:2px,color:#e5e7eb
     classDef tool fill:#2e1f0c,stroke:#fbbf24,stroke-width:2px,color:#e5e7eb
     classDef decision fill:#1e1f32,stroke:#a78bfa,stroke-width:2px,color:#e5e7eb
+    classDef step fill:#1e1f32,stroke:#60a5fa,stroke-width:2px,color:#e5e7eb
     classDef ui fill:#1e1f32,stroke:#22d3ee,stroke-width:2px,color:#e5e7eb
     classDef skip fill:#1e1f32,stroke:#4b5563,stroke-width:1px,color:#9ca3af
     classDef prune fill:#1e1f32,stroke:#f87171,stroke-width:2px,color:#e5e7eb
@@ -365,6 +370,7 @@ flowchart TD
 
 <div class="legend-row a" style="--i:18">
   <div class="legend-item"><div class="legend-swatch" style="background:#818cf8"></div> Pi event</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#60a5fa"></div> Accumulate info</div>
   <div class="legend-item"><div class="legend-swatch" style="background:#34d399"></div> Checkpoint created</div>
   <div class="legend-item"><div class="legend-swatch" style="background:#fbbf24"></div> Tool execution</div>
   <div class="legend-item"><div class="legend-swatch" style="background:#22d3ee"></div> UI update</div>
@@ -471,7 +477,7 @@ flowchart LR
         <tr style="--i:2"><td>2</td><td><strong>Gemini CLI</strong></td><td class="wide"><code>/rewind</code> + <code>Esc+Esc</code> + <code>/restore</code></td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:3"><td>3</td><td><strong>Claude Code</strong></td><td class="wide"><code>/rewind</code> + <code>Esc+Esc</code>, "Summarize from here"</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:4"><td>4</td><td><strong>OpenCode</strong></td><td class="wide"><code>/undo</code> + <code>/redo</code>, step-level patches</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
-        <tr style="--i:5"><td>—</td><td style="color:var(--accent)"><strong>pi-rewind</strong></td><td class="wide" style="color:var(--accent)"><code>/rewind</code> + <code>Esc+Esc</code>, per-tool, redo stack, safe restore</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:5"><td>—</td><td style="color:var(--accent)"><strong>pi-rewind</strong></td><td class="wide" style="color:var(--accent)"><code>/rewind</code> + <code>Esc+Esc</code>, 1 per turn, redo stack, diff preview, safe restore</td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:6"><td>9</td><td>Aider</td><td class="wide"><code>/undo</code> — last aider commit only</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td></tr>
         <tr style="--i:7"><td>10</td><td>Codex CLI</td><td class="wide"><code>Esc+Esc</code> thread rollback (conversation only)</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-o">Conv only</span></td></tr>
       </tbody>
@@ -482,10 +488,11 @@ flowchart LR
 <div class="node a" style="--i:21">
   <h3>What pi-rewind combines from the best</h3>
   <ul>
-    <li><strong>From Cline:</strong> Per-tool checkpointing granularity</li>
+    <li><strong>From Cline:</strong> 1 checkpoint per model response (not per tool — less noise)</li>
     <li><strong>From Claude Code / Gemini:</strong> <code>/rewind</code> command + <code>Esc+Esc</code> shortcut</li>
     <li><strong>From OpenCode:</strong> Redo stack for multi-level undo</li>
     <li><strong>From Claude Code:</strong> Diff preview before restore (planned: "Summarize from here")</li>
+    <li><strong>Unique to pi-rewind:</strong> Descriptive labels (<code>"user prompt" → write → file.ts, edit → other.ts</code>)</li>
     <li><strong>Unique to pi-rewind:</strong> Safe restore that never deletes node_modules, .venv, or large files</li>
   </ul>
 </div>
@@ -500,7 +507,7 @@ flowchart LR
       <tbody>
         <tr style="--i:1"><td class="wide">Dedicated <code>/rewind</code> command</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:2"><td class="wide"><code>Esc+Esc</code> shortcut</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
-        <tr style="--i:3"><td class="wide">Per-tool checkpointing</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
+        <tr style="--i:3"><td class="wide">1 checkpoint per turn (not per tool)</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:4"><td class="wide">Diff preview before restore</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:5"><td class="wide">Redo stack (multi-level undo)</td><td><span class="s s-r">No</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
         <tr style="--i:6"><td class="wide">Safe restore (preserve untracked)</td><td><span class="s s-g">Yes</span></td><td><span class="s s-r">No</span></td><td><span class="s s-g">Yes</span></td></tr>
