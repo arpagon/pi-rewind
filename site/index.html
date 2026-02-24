@@ -181,6 +181,22 @@
   .lineage { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
   .lineage a { color: var(--accent); text-decoration: none; }
   .lineage a:hover { text-decoration: underline; }
+
+  /* Mermaid */
+  .mermaid-wrap { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 24px; overflow: auto; margin-bottom: 24px; }
+  .mermaid-wrap .mermaid { display: flex; justify-content: center; transition: transform 0.2s ease; transform-origin: top center; }
+  .zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+  .zoom-controls button { width: 28px; height: 28px; border: none; background: transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: 14px; cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: background 0.15s, color 0.15s; }
+  .zoom-controls button:hover { background: var(--border); color: var(--text); }
+  .mermaid-wrap.is-zoomed { cursor: grab; }
+  .mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+  .mermaid .nodeLabel { font-family: var(--font-body) !important; font-size: 14px !important; }
+  .mermaid .edgeLabel { font-family: var(--font-mono) !important; font-size: 11px !important; }
+  .mermaid .node rect, .mermaid .node circle, .mermaid .node polygon { stroke-width: 1.5px !important; }
+  .diagram-label { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 12px; }
+  .legend-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 16px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -192,9 +208,10 @@
   <a href="#s2">2. Install</a>
   <a href="#s3">3. Features</a>
   <a href="#s4">4. Architecture</a>
-  <a href="#s5">5. vs Other Agents</a>
-  <a href="#s6">6. vs Pi Extensions</a>
-  <a href="#s7">7. Lineage</a>
+  <a href="#s4b">5. How It Works</a>
+  <a href="#s5">6. vs Other Agents</a>
+  <a href="#s6">7. vs Pi Extensions</a>
+  <a href="#s7">8. Lineage</a>
 </nav>
 
 <div class="main">
@@ -309,8 +326,139 @@
   </div>
 </details>
 
-<!-- ═══════════ 5: VS AGENTS ═══════════ -->
-<div id="s5" class="sec-head a" style="--i:18">5 — vs Other Coding Agents</div>
+<!-- ═══════════ 5: HOW IT WORKS ═══════════ -->
+<div id="s4b" class="sec-head a" style="--i:17">5 — How It Works</div>
+
+<p class="a" style="--i:17; margin-bottom:8px; color:var(--text-dim); font-size:13px;">Checkpoint lifecycle: when snapshots are created, stored, and restored.</p>
+
+<div class="diagram-label a" style="--i:17">Checkpoint Creation Flow</div>
+<div class="mermaid-wrap a" style="--i:18">
+  <div class="zoom-controls">
+    <button onclick="zoomDiagram(this, 1.2)" title="Zoom in">+</button>
+    <button onclick="zoomDiagram(this, 0.8)" title="Zoom out">&minus;</button>
+    <button onclick="resetZoom(this)" title="Reset zoom">&#8634;</button>
+  </div>
+  <pre class="mermaid">
+flowchart TD
+    SS["session_start"]:::event --> RC["Create resume checkpoint"]:::checkpoint
+    RC --> STATUS["Update footer: diamond N checkpoints"]:::ui
+
+    TS["turn_start"]:::event --> TC["Create turn checkpoint"]:::checkpoint
+    TC --> STATUS
+
+    TEE["tool_execution_end"]:::tool --> MUT{"write / edit / bash?"}:::decision
+    MUT -->|"Yes"| TOOLCP["Create tool checkpoint"]:::checkpoint
+    MUT -->|"No (read, grep...)"| SKIP["Skip"]:::skip
+    TOOLCP --> STATUS
+
+    TEND["turn_end"]:::event --> PRUNE["Auto-prune if > 100"]:::prune
+
+    classDef event fill:#1e1f32,stroke:#818cf8,stroke-width:2px,color:#e5e7eb
+    classDef checkpoint fill:#0c3d2e,stroke:#34d399,stroke-width:2px,color:#e5e7eb
+    classDef tool fill:#2e1f0c,stroke:#fbbf24,stroke-width:2px,color:#e5e7eb
+    classDef decision fill:#1e1f32,stroke:#a78bfa,stroke-width:2px,color:#e5e7eb
+    classDef ui fill:#1e1f32,stroke:#22d3ee,stroke-width:2px,color:#e5e7eb
+    classDef skip fill:#1e1f32,stroke:#4b5563,stroke-width:1px,color:#9ca3af
+    classDef prune fill:#1e1f32,stroke:#f87171,stroke-width:2px,color:#e5e7eb
+  </pre>
+</div>
+
+<div class="legend-row a" style="--i:18">
+  <div class="legend-item"><div class="legend-swatch" style="background:#818cf8"></div> Pi event</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#34d399"></div> Checkpoint created</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#fbbf24"></div> Tool execution</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#22d3ee"></div> UI update</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#f87171"></div> Cleanup</div>
+</div>
+
+<div class="diagram-label a" style="--i:19; margin-top:28px">Restore Flow (/rewind or Esc+Esc)</div>
+<div class="mermaid-wrap a" style="--i:19">
+  <div class="zoom-controls">
+    <button onclick="zoomDiagram(this, 1.2)" title="Zoom in">+</button>
+    <button onclick="zoomDiagram(this, 0.8)" title="Zoom out">&minus;</button>
+    <button onclick="resetZoom(this)" title="Reset zoom">&#8634;</button>
+  </div>
+  <pre class="mermaid">
+flowchart TD
+    TRIGGER["/rewind or Esc+Esc"]:::event --> LIST["List checkpoints (newest first)"]:::step
+    LIST --> PICK["User picks checkpoint"]:::ui
+    PICK --> DIFF["Show git diff --stat preview"]:::step
+    DIFF --> CONFIRM{"Confirm?"}:::decision
+    CONFIRM -->|"Cancel"| DONE["Done"]:::skip
+    CONFIRM -->|"Yes"| MODE["Pick restore mode"]:::ui
+
+    MODE --> M_ALL["Files + conversation"]:::restore
+    MODE --> M_FILES["Files only"]:::restore
+    MODE --> M_CONV["Conversation only"]:::restore
+
+    M_ALL --> BEFORE["Create before-restore checkpoint (safety net)"]:::checkpoint
+    M_FILES --> BEFORE
+    BEFORE --> RESTORE["Restore worktree from snapshot"]:::restore
+
+    RESTORE --> S1["1. git reset --hard HEAD"]:::git
+    S1 --> S2["2. git read-tree -u worktree-tree"]:::git
+    S2 --> S3["3. Safe clean (only NEW files)"]:::git
+    S3 --> S4["4. git read-tree index-tree"]:::git
+    S4 --> PUSH_REDO["Push to redo stack"]:::checkpoint
+
+    M_CONV --> NAV["ctx.navigateTree(entryId)"]:::step
+    M_ALL --> NAV
+
+    PUSH_REDO --> NOTIFY["Notify: Rewound to checkpoint N"]:::ui
+
+    classDef event fill:#1e1f32,stroke:#818cf8,stroke-width:2px,color:#e5e7eb
+    classDef step fill:#1e1f32,stroke:#60a5fa,stroke-width:2px,color:#e5e7eb
+    classDef ui fill:#1e1f32,stroke:#22d3ee,stroke-width:2px,color:#e5e7eb
+    classDef decision fill:#1e1f32,stroke:#a78bfa,stroke-width:2px,color:#e5e7eb
+    classDef restore fill:#2e1f0c,stroke:#fbbf24,stroke-width:2px,color:#e5e7eb
+    classDef checkpoint fill:#0c3d2e,stroke:#34d399,stroke-width:2px,color:#e5e7eb
+    classDef git fill:#14151f,stroke:#9ca3af,stroke-width:1px,color:#e5e7eb
+    classDef skip fill:#1e1f32,stroke:#4b5563,stroke-width:1px,color:#9ca3af
+  </pre>
+</div>
+
+<div class="legend-row a" style="--i:20">
+  <div class="legend-item"><div class="legend-swatch" style="background:#818cf8"></div> Trigger</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#22d3ee"></div> User interaction</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#fbbf24"></div> Restore operation</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#34d399"></div> Safety checkpoint</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#9ca3af"></div> Git command</div>
+</div>
+
+<div class="diagram-label a" style="--i:21; margin-top:28px">Safe Restore Detail</div>
+<div class="mermaid-wrap a" style="--i:21">
+  <div class="zoom-controls">
+    <button onclick="zoomDiagram(this, 1.2)" title="Zoom in">+</button>
+    <button onclick="zoomDiagram(this, 0.8)" title="Zoom out">&minus;</button>
+    <button onclick="resetZoom(this)" title="Reset zoom">&#8634;</button>
+  </div>
+  <pre class="mermaid">
+flowchart LR
+    UNTRACKED["Current untracked files"]:::step --> CHECK{"Was it there at checkpoint time?"}:::decision
+    CHECK -->|"Yes (pre-existing)"| KEEP["KEEP - never delete"]:::safe
+    CHECK -->|"No (new file)"| CHECK2{"In ignored dir? Large file?"}:::decision
+    CHECK2 -->|"Yes"| KEEP2["KEEP - protected"]:::safe
+    CHECK2 -->|"No"| DELETE["DELETE - git clean"]:::danger
+
+    classDef step fill:#1e1f32,stroke:#60a5fa,stroke-width:2px,color:#e5e7eb
+    classDef decision fill:#1e1f32,stroke:#a78bfa,stroke-width:2px,color:#e5e7eb
+    classDef safe fill:#0c3d2e,stroke:#34d399,stroke-width:2px,color:#e5e7eb
+    classDef danger fill:#2e0c0c,stroke:#f87171,stroke-width:2px,color:#e5e7eb
+  </pre>
+</div>
+
+<details class="col a" style="--i:22">
+  <summary>What gets protected during safe restore?</summary>
+  <div class="cb">
+    <strong>Pre-existing untracked files:</strong> Tracked at checkpoint creation time. If a file was untracked when the checkpoint was made, it will never be deleted on restore.<br><br>
+    <strong>Ignored directories (13 patterns):</strong> <code>node_modules</code>, <code>.venv</code>, <code>venv</code>, <code>env</code>, <code>.env</code>, <code>dist</code>, <code>build</code>, <code>.pytest_cache</code>, <code>.mypy_cache</code>, <code>.cache</code>, <code>.tox</code>, <code>__pycache__</code><br><br>
+    <strong>Large files:</strong> Files exceeding 10 MiB are skipped during snapshot and never deleted on restore.<br><br>
+    <strong>Large directories:</strong> Directories with 200+ files are skipped entirely — prevents accidentally snapshotting or deleting generated content.
+  </div>
+</details>
+
+<!-- ═══════════ 6: VS AGENTS ═══════════ -->
+<div id="s5" class="sec-head a" style="--i:23">6 — vs Other Coding Agents</div>
 
 <p class="a" style="--i:19; margin-bottom:16px; color:var(--text-dim); font-size:13px;">Based on research across 11 agents (820K tokens analyzed via Codex). Ranked by rewind completeness.</p>
 
@@ -343,7 +491,7 @@
 </div>
 
 <!-- ═══════════ 6: VS PI EXTENSIONS ═══════════ -->
-<div id="s6" class="sec-head a" style="--i:22">6 — vs Existing Pi Extensions</div>
+<div id="s6" class="sec-head a" style="--i:28">7 — vs Existing Pi Extensions</div>
 
 <div class="table-wrap a" style="--i:23">
   <div class="table-scroll">
@@ -374,7 +522,7 @@
 </div>
 
 <!-- ═══════════ 7: LINEAGE ═══════════ -->
-<div id="s7" class="sec-head a" style="--i:24">7 — Lineage &amp; Credits</div>
+<div id="s7" class="sec-head a" style="--i:30">8 — Lineage &amp; Credits</div>
 
 <div class="node a" style="--i:25">
   <h3>Built on the shoulders of two great Pi extensions</h3>
@@ -393,6 +541,73 @@
 </div><!-- /main -->
 </div><!-- /wrap -->
 
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    look: 'handDrawn',
+    themeVariables: {
+      primaryColor: isDark ? '#1e1f32' : '#eef2ff',
+      primaryBorderColor: isDark ? '#818cf8' : '#6366f1',
+      primaryTextColor: isDark ? '#e5e7eb' : '#111827',
+      secondaryColor: isDark ? '#0c3d2e' : '#ecfdf5',
+      secondaryBorderColor: isDark ? '#34d399' : '#059669',
+      secondaryTextColor: isDark ? '#e5e7eb' : '#111827',
+      tertiaryColor: isDark ? '#2e1f0c' : '#fffbeb',
+      tertiaryBorderColor: isDark ? '#fbbf24' : '#d97706',
+      tertiaryTextColor: isDark ? '#e5e7eb' : '#111827',
+      lineColor: isDark ? '#9ca3af' : '#6b7280',
+      fontSize: '14px',
+      fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    }
+  });
+</script>
+<script>
+  function zoomDiagram(btn, factor) {
+    var wrap = btn.closest('.mermaid-wrap');
+    var target = wrap.querySelector('.mermaid');
+    var current = parseFloat(target.dataset.zoom || '1');
+    var next = Math.min(Math.max(current * factor, 0.3), 5);
+    target.dataset.zoom = next;
+    target.style.transform = 'scale(' + next + ')';
+    wrap.classList.toggle('is-zoomed', next > 1);
+  }
+  function resetZoom(btn) {
+    var wrap = btn.closest('.mermaid-wrap');
+    var target = wrap.querySelector('.mermaid');
+    target.dataset.zoom = '1';
+    target.style.transform = 'scale(1)';
+    wrap.classList.remove('is-zoomed');
+  }
+  document.querySelectorAll('.mermaid-wrap').forEach(function(wrap) {
+    wrap.addEventListener('wheel', function(e) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      var target = wrap.querySelector('.mermaid');
+      var current = parseFloat(target.dataset.zoom || '1');
+      var next = Math.min(Math.max(current * (e.deltaY < 0 ? 1.1 : 0.9), 0.3), 5);
+      target.dataset.zoom = next;
+      target.style.transform = 'scale(' + next + ')';
+      wrap.classList.toggle('is-zoomed', next > 1);
+    }, { passive: false });
+    var sx, sy, sl, st;
+    wrap.addEventListener('mousedown', function(e) {
+      if (e.target.closest('.zoom-controls')) return;
+      var t = wrap.querySelector('.mermaid');
+      if (parseFloat(t.dataset.zoom || '1') <= 1) return;
+      wrap.classList.add('is-panning');
+      sx = e.clientX; sy = e.clientY; sl = wrap.scrollLeft; st = wrap.scrollTop;
+    });
+    window.addEventListener('mousemove', function(e) {
+      if (!wrap.classList.contains('is-panning')) return;
+      wrap.scrollLeft = sl - (e.clientX - sx);
+      wrap.scrollTop = st - (e.clientY - sy);
+    });
+    window.addEventListener('mouseup', function() { wrap.classList.remove('is-panning'); });
+  });
+</script>
 <script>
 (function() {
   const toc = document.getElementById('toc');
