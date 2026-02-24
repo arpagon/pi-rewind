@@ -30,6 +30,9 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      - name: Upgrade npm for Trusted Publishing support
+        run: npm install -g npm@latest
+
       - name: Set version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
