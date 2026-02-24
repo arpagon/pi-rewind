@@ -4,9 +4,9 @@ Checkpoint/rewind extension for the [Pi coding agent](https://github.com/badlogi
 
 ## Why
 
-Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CLI (`/rewind`), OpenCode (`/undo`), Cline (Checkpoints). Pi doesn't have it built-in, but its extension API is powerful enough to match or exceed them all.
+Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CLI (`/rewind`), OpenCode (`/undo`), Cline (Checkpoints). Pi already has community extensions for this — [checkpoint-pi](https://github.com/prateekmedia/pi-hooks/tree/main/checkpoint) and [pi-rewind-hook](https://github.com/nicobailon/pi-rewind-hook) — but neither offers a dedicated `/rewind` command, per-tool granularity, or a redo stack.
 
-**pi-rewind** aims to be the best rewind experience for Pi, combining the strengths of existing community extensions with features from the top agents.
+**pi-rewind** combines the best of both existing extensions with features from the top agents, closing every gap in one package.
 
 ## Features
 
