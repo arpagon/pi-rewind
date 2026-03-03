@@ -20,6 +20,7 @@ import {
   isGitRepo,
   getRepoRoot,
   createCheckpoint,
+  deleteCheckpoint,
   loadAllCheckpoints,
   pruneCheckpoints,
   MUTATING_TOOLS,
@@ -97,6 +98,7 @@ export default function (pi: ExtensionAPI) {
       });
       state.resumeCheckpoint = cp;
       state.checkpoints.set(cp.id, cp);
+      state.lastWorktreeTree = cp.worktreeTreeSha;
     } catch {
       // Resume checkpoint is optional
     }
@@ -196,7 +198,15 @@ export default function (pi: ExtensionAPI) {
             turnIndex: state.currentTurnIndex,
             description: desc,
           });
+
+          // Skip if worktree is identical to last checkpoint (read-only bash like ls, find, cat)
+          if (state.lastWorktreeTree && cp.worktreeTreeSha === state.lastWorktreeTree) {
+            await deleteCheckpoint(state.repoRoot!, cp.id);
+            return;
+          }
+
           state.checkpoints.set(cp.id, cp);
+          state.lastWorktreeTree = cp.worktreeTreeSha;
           updateStatus(state, ctx);
         } catch {
           // Checkpoint failures are non-fatal

@@ -33,6 +33,8 @@ export interface RewindState {
   turnToolDescriptions: string[];
   /** Whether the current turn had any mutating tool calls */
   turnHadMutations: boolean;
+  /** Last worktree tree SHA (to detect actual file changes) */
+  lastWorktreeTree: string | null;
 }
 
 export function createInitialState(): RewindState {
@@ -50,6 +52,7 @@ export function createInitialState(): RewindState {
     pendingToolInfo: new Map(),
     turnToolDescriptions: [],
     turnHadMutations: false,
+    lastWorktreeTree: null,
   };
 }
 
@@ -67,4 +70,5 @@ export function resetState(state: RewindState): void {
   state.pendingToolInfo.clear();
   state.turnToolDescriptions = [];
   state.turnHadMutations = false;
+  state.lastWorktreeTree = null;
 }
