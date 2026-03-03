@@ -23,6 +23,7 @@ import {
   deleteCheckpoint,
   loadAllCheckpoints,
   pruneCheckpoints,
+  pruneOldSessions,
   MUTATING_TOOLS,
   DEFAULT_MAX_CHECKPOINTS,
 } from "./core.js";
@@ -104,6 +105,22 @@ export default function (pi: ExtensionAPI) {
     }
 
     updateStatus(state, ctx);
+
+    // Prune old sessions in background (non-blocking)
+    if (state.repoRoot && state.sessionId) {
+      const root = state.repoRoot;
+      const sid = state.sessionId;
+      pruneOldSessions(root, sid).then((pruned) => {
+        if (pruned > 0) {
+          // Reload cache after prune
+          loadAllCheckpoints(root, sid).then((remaining) => {
+            state.checkpoints.clear();
+            for (const cp of remaining) state.checkpoints.set(cp.id, cp);
+            updateStatus(state, ctx);
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
   }
 
   pi.on("session_start", async (_event, ctx) => {

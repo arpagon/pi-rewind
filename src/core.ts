@@ -25,7 +25,7 @@ export const MAX_UNTRACKED_FILE_SIZE = 10 * 1024 * 1024;
 export const MAX_UNTRACKED_DIR_FILES = 200;
 
 /** Default max checkpoints before auto-pruning */
-export const DEFAULT_MAX_CHECKPOINTS = 100;
+export const DEFAULT_MAX_CHECKPOINTS = 50;
 
 /** Directories to exclude from snapshots (matched against any path component) */
 export const IGNORED_DIR_NAMES = new Set([
@@ -626,6 +626,59 @@ export async function pruneCheckpoints(
     await deleteCheckpoint(root, cp.id);
   }
   return toDelete.length;
+}
+
+/**
+ * Prune checkpoints from all sessions except the current one.
+ * Keeps only the most recent `keepPerOldSession` checkpoints per old session.
+ * Returns total number of deleted checkpoints.
+ */
+export async function pruneOldSessions(
+  root: string,
+  currentSessionId: string,
+  keepPerOldSession: number = 0,
+): Promise<number> {
+  const refs = await listCheckpointRefs(root);
+  let deleted = 0;
+
+  // Group refs by session (parse sessionId from ref name without loading full commit)
+  const bySession = new Map<string, string[]>();
+  for (const ref of refs) {
+    // Ref format: refs/pi-checkpoints/{type}-{sessionId}-{turnIndex}-{timestamp}
+    // Extract sessionId: skip the type prefix, take the UUID part
+    const name = ref.replace("refs/pi-checkpoints/", "");
+    const parts = name.split("-");
+    // UUID is 5 groups: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    // Find it after the trigger prefix (resume, turn, before-restore)
+    let sessionId: string | null = null;
+    for (let i = 0; i < parts.length - 5; i++) {
+      const candidate = parts.slice(i + 1, i + 6).join("-");
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(candidate)) {
+        sessionId = candidate;
+        break;
+      }
+    }
+    if (!sessionId || sessionId === currentSessionId) continue;
+
+    if (!bySession.has(sessionId)) bySession.set(sessionId, []);
+    bySession.get(sessionId)!.push(ref);
+  }
+
+  for (const [_sid, sessionRefs] of bySession) {
+    // Sort by ref name (contains timestamp at end) — oldest first
+    sessionRefs.sort();
+    const toDelete = keepPerOldSession > 0
+      ? sessionRefs.slice(0, Math.max(0, sessionRefs.length - keepPerOldSession))
+      : sessionRefs;
+
+    for (const ref of toDelete) {
+      const id = ref.replace("refs/pi-checkpoints/", "");
+      await deleteCheckpoint(root, id).catch(() => {});
+      deleted++;
+    }
+  }
+
+  return deleted;
 }
 
 /** Get a diff summary between two checkpoint trees */
