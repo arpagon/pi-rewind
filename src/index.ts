@@ -65,11 +65,9 @@ export default function (pi: ExtensionAPI) {
   async function initSession(ctx: any): Promise<void> {
     resetState(state);
 
-    if (!ctx.hasUI) return;
-
     state.gitAvailable = await isGitRepo(ctx.cwd);
     if (!state.gitAvailable) {
-      clearStatus(ctx);
+      if (ctx.hasUI) clearStatus(ctx);
       return;
     }
 
@@ -104,7 +102,7 @@ export default function (pi: ExtensionAPI) {
       // Resume checkpoint is optional
     }
 
-    updateStatus(state, ctx);
+    if (ctx.hasUI) updateStatus(state, ctx);
 
     // Prune old sessions in background (non-blocking)
     if (state.repoRoot && state.sessionId) {
@@ -116,24 +114,22 @@ export default function (pi: ExtensionAPI) {
           loadAllCheckpoints(root, sid).then((remaining) => {
             state.checkpoints.clear();
             for (const cp of remaining) state.checkpoints.set(cp.id, cp);
-            updateStatus(state, ctx);
+            if (ctx.hasUI) updateStatus(state, ctx);
           }).catch(() => {});
         }
       }).catch(() => {});
     }
   }
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
+    if (event.reason === "fork") {
+      // Fork: just update session ID for new checkpoint tagging
+      if (!state.gitAvailable) return;
+      state.sessionId = ctx.sessionManager.getSessionId();
+      return;
+    }
+    // startup, reload, new, resume: full re-initialization
     await initSession(ctx);
-  });
-
-  pi.on("session_switch", async (_event, ctx) => {
-    await initSession(ctx);
-  });
-
-  pi.on("session_fork", async (_event, ctx) => {
-    if (!state.gitAvailable) return;
-    state.sessionId = ctx.sessionManager.getSessionId();
   });
 
   // ========================================================================
@@ -188,7 +184,7 @@ export default function (pi: ExtensionAPI) {
   // ========================================================================
 
   pi.on("turn_end", async (_event, ctx) => {
-    if (!ctx.hasUI || !state.gitAvailable || state.failed) return;
+    if (!state.gitAvailable || state.failed) return;
     if (!state.repoRoot || !state.sessionId) return;
 
     // Only create checkpoint if this turn had mutating tools
@@ -224,7 +220,7 @@ export default function (pi: ExtensionAPI) {
 
           state.checkpoints.set(cp.id, cp);
           state.lastWorktreeTree = cp.worktreeTreeSha;
-          updateStatus(state, ctx);
+          if (ctx.hasUI) updateStatus(state, ctx);
         } catch {
           // Checkpoint failures are non-fatal
         }
@@ -247,7 +243,7 @@ export default function (pi: ExtensionAPI) {
         for (const cp of remaining) {
           state.checkpoints.set(cp.id, cp);
         }
-        updateStatus(state, ctx);
+        if (ctx.hasUI) updateStatus(state, ctx);
       }
     } catch {
       // Pruning is non-critical
