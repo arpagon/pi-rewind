@@ -37,7 +37,7 @@ Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CL
 pi install npm:pi-rewind
 
 # From GitHub
-pi install github.com/arpagon/pi-rewind
+pi install https://github.com/arpagon/pi-rewind
 
 # For development
 git clone git@github.com:arpagon/pi-rewind.git
