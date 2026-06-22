@@ -644,10 +644,9 @@ export async function pruneOldSessions(
   // Group refs by session (parse sessionId from ref name without loading full commit)
   const bySession = new Map<string, string[]>();
   for (const ref of refs) {
-    // Ref format: refs/pi-checkpoints/{type}-{sessionId}-{turnIndex}-{timestamp}
+    // Ref format: {type}-{sessionId}-{turnIndex}-{timestamp}
     // Extract sessionId: skip the type prefix, take the UUID part
-    const name = ref.replace("refs/pi-checkpoints/", "");
-    const parts = name.split("-");
+    const parts = ref.split("-");
     // UUID is 5 groups: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     // Find it after the trigger prefix (resume, turn, before-restore)
     let sessionId: string | null = null;
@@ -678,6 +677,114 @@ export async function pruneOldSessions(
     }
   }
 
+  return deleted;
+}
+
+// ============================================================================
+// Stats / cleanup utilities
+// ============================================================================
+
+/** Grouped checkpoint count by session */
+export interface CheckpointStats {
+  currentSessionId: string | null;
+  currentSessionCount: number;
+  oldSessionsCount: number;
+  oldSessionCount: number;
+  /** Session groups sorted newest-first by most recent checkpoint */
+  oldSessionGroups: Array<{
+    sessionId: string;
+    count: number;
+    newestTimestamp: number;
+    oldestTimestamp: number;
+  }>;
+  total: number;
+}
+
+/** Compute checkpoint statistics grouped by session */
+export async function getCheckpointStats(
+  root: string,
+  currentSessionId: string,
+): Promise<CheckpointStats> {
+  const all = await loadAllCheckpoints(root);
+
+  const bySession = new Map<string, CheckpointData[]>();
+  for (const cp of all) {
+    const list = bySession.get(cp.sessionId) || [];
+    list.push(cp);
+    bySession.set(cp.sessionId, list);
+  }
+
+  const current = bySession.get(currentSessionId) || [];
+  bySession.delete(currentSessionId);
+
+  const oldSessionGroups: CheckpointStats["oldSessionGroups"] = [];
+  let oldSessionsCount = 0;
+  for (const [sid, cps] of bySession) {
+    cps.sort((a, b) => a.timestamp - b.timestamp);
+    oldSessionGroups.push({
+      sessionId: sid,
+      count: cps.length,
+      newestTimestamp: cps[cps.length - 1].timestamp,
+      oldestTimestamp: cps[0].timestamp,
+    });
+    oldSessionsCount += cps.length;
+  }
+
+  // Sort groups newest-first
+  oldSessionGroups.sort((a, b) => b.newestTimestamp - a.newestTimestamp);
+
+  return {
+    currentSessionId,
+    currentSessionCount: current.length,
+    oldSessionsCount,
+    oldSessionCount: oldSessionGroups.length,
+    oldSessionGroups,
+    total: all.length,
+  };
+}
+
+/** Delete all checkpoints from sessions other than the current one */
+export async function pruneAllOldSessions(
+  root: string,
+  currentSessionId: string,
+): Promise<number> {
+  const refs = await listCheckpointRefs(root);
+  let deleted = 0;
+
+  for (const ref of refs) {
+    // Skip current session — parse sessionId from ref name
+    const sessionId = extractSessionIdFromRef(ref);
+    if (!sessionId || sessionId === currentSessionId) continue;
+
+    await deleteCheckpoint(root, ref).catch(() => {});
+    deleted++;
+  }
+
+  return deleted;
+}
+
+/** Extract session UUID from a checkpoint ref name */
+function extractSessionIdFromRef(refName: string): string | null {
+  const parts = refName.split("-");
+  for (let i = 0; i < parts.length - 5; i++) {
+    const candidate = parts.slice(i + 1, i + 6).join("-");
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/** Batch delete multiple checkpoint refs */
+export async function deleteCheckpointsBulk(
+  root: string,
+  ids: string[],
+): Promise<number> {
+  let deleted = 0;
+  for (const id of ids) {
+    await deleteCheckpoint(root, id).catch(() => {});
+    deleted++;
+  }
   return deleted;
 }
 

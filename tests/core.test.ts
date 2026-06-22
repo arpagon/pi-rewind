@@ -20,6 +20,11 @@ import {
   loadAllCheckpoints,
   deleteCheckpoint,
   pruneCheckpoints,
+  pruneOldSessions,
+  pruneAllOldSessions,
+  deleteCheckpointsBulk,
+  getCheckpointStats,
+  diffCheckpoints,
   findClosestCheckpoint,
   shouldIgnoreForSnapshot,
   sanitizeForRef,
@@ -289,6 +294,188 @@ async function runTests() {
 
     const remaining = await loadAllCheckpoints(repo, "prune-session");
     assertEqual(remaining.length, 3, "3 remaining");
+  });
+
+  // ------ Bulk Delete ------
+
+  console.log("\nBulk Delete:");
+
+  await test("deleteCheckpointsBulk removes multiple refs", async () => {
+    for (let i = 0; i < 3; i++) {
+      await createCheckpoint(makeOpts(repo, {
+        id: `bulk-${i}`,
+        sessionId: "bulk-session",
+        turnIndex: i,
+      }));
+    }
+
+    const refsBefore = await listCheckpointRefs(repo);
+    assert(refsBefore.includes("bulk-0"), "bulk-0 exists before");
+    assert(refsBefore.includes("bulk-1"), "bulk-1 exists before");
+    assert(refsBefore.includes("bulk-2"), "bulk-2 exists before");
+
+    const deleted = await deleteCheckpointsBulk(repo, ["bulk-0", "bulk-1", "bulk-2"]);
+    assertEqual(deleted, 3, "deleted 3");
+
+    const refsAfter = await listCheckpointRefs(repo);
+    assert(!refsAfter.includes("bulk-0"), "bulk-0 gone");
+    assert(!refsAfter.includes("bulk-1"), "bulk-1 gone");
+    assert(!refsAfter.includes("bulk-2"), "bulk-2 gone");
+  });
+
+  // ------ Cross-Session Pruning ------
+  // NOTE: pruneOldSessions / pruneAllOldSessions extract sessionId from the ref
+  // name, so checkpoints must use the standard ID format with an embedded UUID.
+
+  console.log("\nCross-Session Pruning:");
+
+  const OLD_UUID = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const OLD_UUID2 = "bbbb2222-cccc-4ddd-8eee-ffffffffffff";
+  const OLD_UUID3 = "cccc3333-dddd-4eee-8fff-aaaaaaaaaaaa";
+  const OLD_UUID4 = "dddd4444-eeee-4fff-8aaa-bbbbbbbbbbbb";
+
+  await test("pruneOldSessions removes checkpoints from old sessions", async () => {
+    const ts = Date.now();
+    for (let i = 0; i < 3; i++) {
+      await createCheckpoint(makeOpts(repo, {
+        id: `turn-${OLD_UUID}-${i}-${ts + i}`,
+        sessionId: OLD_UUID,
+        turnIndex: i,
+      }));
+    }
+
+    // Verify they exist
+    const oldCheckpoints = await loadAllCheckpoints(repo, OLD_UUID);
+    assertEqual(oldCheckpoints.length, 3, "3 old checkpoints exist");
+
+    // Prune with keepPerOldSession=0
+    const pruned = await pruneOldSessions(repo, "current-session", 0);
+    assertEqual(pruned, 3, "pruned 3 old checkpoints");
+
+    const remaining = await loadAllCheckpoints(repo, OLD_UUID);
+    assertEqual(remaining.length, 0, "no old checkpoints remain");
+  });
+
+  await test("pruneOldSessions respects keepPerOldSession", async () => {
+    const ts = Date.now();
+    for (let i = 0; i < 5; i++) {
+      await createCheckpoint(makeOpts(repo, {
+        id: `turn-${OLD_UUID2}-${i}-${ts + i}`,
+        sessionId: OLD_UUID2,
+        turnIndex: i,
+      }));
+    }
+
+    // Prune keeping 2 per old session
+    const pruned = await pruneOldSessions(repo, "current-session", 2);
+    assertEqual(pruned, 3, "pruned 3 of 5");
+
+    const remaining = await loadAllCheckpoints(repo, OLD_UUID2);
+    assertEqual(remaining.length, 2, "2 kept per old session");
+  });
+
+  await test("pruneAllOldSessions deletes all non-current checkpoints", async () => {
+    const ts = Date.now();
+    const currentUuid = "0000aaaa-1111-4bbb-8ccc-dddddddddddd";
+
+    await createCheckpoint(makeOpts(repo, {
+      id: `turn-${currentUuid}-0-${ts}`,
+      sessionId: currentUuid,
+      turnIndex: 0,
+    }));
+    await createCheckpoint(makeOpts(repo, {
+      id: `turn-${OLD_UUID3}-0-${ts + 1}`,
+      sessionId: OLD_UUID3,
+      turnIndex: 0,
+    }));
+    await createCheckpoint(makeOpts(repo, {
+      id: `turn-${OLD_UUID4}-0-${ts + 2}`,
+      sessionId: OLD_UUID4,
+      turnIndex: 0,
+    }));
+
+    const deleted = await pruneAllOldSessions(repo, currentUuid);
+    assert(deleted >= 2, `deleted >= 2 old session checkpoints (got ${deleted})`);
+
+    const currentRemaining = await loadAllCheckpoints(repo, currentUuid);
+    assertEqual(currentRemaining.length, 1, "current session checkpoint kept");
+    assert(currentRemaining[0].id.includes("0000aaaa"), "keep-me survived");
+
+    // Old sessions we created should be empty
+    const oldA = await loadAllCheckpoints(repo, OLD_UUID3);
+    assertEqual(oldA.length, 0, "old session A fully pruned");
+
+    const oldB = await loadAllCheckpoints(repo, OLD_UUID4);
+    assertEqual(oldB.length, 0, "old session B fully pruned");
+  });
+
+  // ------ Checkpoint Stats ------
+
+  console.log("\nCheckpoint Stats:");
+
+  await test("getCheckpointStats computes correct counts", async () => {
+    // Create fresh checkpoints with a unique session ID for stats testing
+    const statsSid = "stats-current";
+    const statsOld = "eeee5555-aaaa-4bbb-8ccc-444444444444";
+    const ts = Date.now();
+
+    for (let i = 0; i < 3; i++) {
+      await createCheckpoint(makeOpts(repo, {
+        id: `turn-${statsSid}-${i}-${ts + i}`,
+        sessionId: statsSid,
+        turnIndex: i,
+      }));
+    }
+    for (let i = 0; i < 2; i++) {
+      await createCheckpoint(makeOpts(repo, {
+        id: `turn-${statsOld}-${i}-${ts + 10 + i}`,
+        sessionId: statsOld,
+        turnIndex: i,
+      }));
+    }
+
+    const stats = await getCheckpointStats(repo, statsSid);
+    assertEqual(stats.currentSessionId, statsSid, "current session id");
+    assertEqual(stats.currentSessionCount, 3, "current session has 3");
+    // Repo accumulates checkpoints from earlier tests, so oldSessionsCount >= 2
+    assert(stats.oldSessionsCount >= 2, `old sessions total >= 2 (got ${stats.oldSessionsCount})`);
+    assert(stats.oldSessionCount >= 1, "at least 1 old session group");
+    assert(stats.total >= 5, `total >= 5 (got ${stats.total})`);
+
+    const oldGroup = stats.oldSessionGroups.find((g) => g.sessionId === statsOld);
+    assert(oldGroup !== undefined, "old session group found");
+    assertEqual(oldGroup!.count, 2, "old group has 2 checkpoints");
+    assert(oldGroup!.newestTimestamp >= oldGroup!.oldestTimestamp, "timestamps ordered");
+  });
+
+  // ------ Diff Checkpoints ------
+
+  console.log("\nDiff:");
+
+  await test("diffCheckpoints returns stat output", async () => {
+    // Create checkpoint A
+    await writeFile(join(repo, "diff-test.txt"), "before");
+    await git("add diff-test.txt", repo);
+    const cpA = await createCheckpoint(makeOpts(repo, {
+      id: `diff-a`,
+      sessionId: "diff-session",
+      trigger: "tool",
+      turnIndex: 0,
+    }));
+
+    // Modify and create checkpoint B
+    await writeFile(join(repo, "diff-test.txt"), "after changes");
+    await git("add diff-test.txt", repo);
+    const cpB = await createCheckpoint(makeOpts(repo, {
+      id: `diff-b`,
+      sessionId: "diff-session",
+      trigger: "tool",
+      turnIndex: 1,
+    }));
+
+    const diff = await diffCheckpoints(repo, cpA.worktreeTreeSha, cpB.worktreeTreeSha);
+    assert(diff.length > 0, "diff output is non-empty");
+    assert(diff.includes("diff-test.txt"), "diff mentions the changed file");
   });
 
   // ------ findClosestCheckpoint ------
