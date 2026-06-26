@@ -5,8 +5,11 @@
  */
 
 import type { CheckpointData } from "./core.js";
+import type { RewindConfig } from "./config.js";
 
 export interface RewindState {
+  /** Loaded configuration */
+  config: RewindConfig;
   /** Is the cwd a git repo? */
   gitAvailable: boolean;
   /** Absolute path to repo root */
@@ -37,8 +40,9 @@ export interface RewindState {
   lastWorktreeTree: string | null;
 }
 
-export function createInitialState(): RewindState {
+export function createInitialState(config: RewindConfig): RewindState {
   return {
+    config,
     gitAvailable: false,
     repoRoot: null,
     sessionId: null,
@@ -57,6 +61,7 @@ export function createInitialState(): RewindState {
 }
 
 export function resetState(state: RewindState): void {
+  // config is preserved across resets
   state.gitAvailable = false;
   state.repoRoot = null;
   state.sessionId = null;

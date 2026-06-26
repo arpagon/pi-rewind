@@ -23,9 +23,11 @@ Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CL
 - [x] Branch safety — blocks cross-branch restore (avoids OpenCode bug)
 - [x] Smart filtering — excludes 13 dir patterns, files >10MiB, dirs >200 files
 - [x] Git-based checkpoints stored as refs (survives restarts)
-- [x] Footer status indicator (`◆ X checkpoints`)
-- [x] Auto-prune old sessions — deletes checkpoints from previous sessions on startup
-- [x] Auto-prune per session — 50 max checkpoints per session
+- [x] Footer status indicator (`◆ X checkpoints`) with cleanup hint
+- [x] Configurable auto-pruning — `maxCheckpoints` (0=unlimited), `keepOldSessions`, `cleanupHintThreshold`
+- [x] Cross-session checkpoint picker — two-step (session → checkpoint) when old sessions kept
+- [x] `/rewind-settings` — interactive config menu, auto-saves on change
+- [x] `/rewind-cleanup` — stats + prune options for current and old sessions
 - [x] Resume checkpoint on session start
 - [x] Fork/tree integration — restore prompts on `/fork` and `/tree` navigation
 - [ ] "Summarize from here" integration (`ctx.compact()`)
@@ -43,6 +45,35 @@ pi install github.com/arpagon/pi-rewind
 git clone git@github.com:arpagon/pi-rewind.git
 pi -e ./pi-rewind/src/index.ts
 ```
+
+## Commands
+
+| Command | Behavior |
+|---|---|
+| `/rewind` | Checkpoint browser → diff preview → restore. Two-step cross-session picker when `keepOldSessions` is true |
+| `/rewind-cleanup` | Stats overview + prune options (old sessions, current session to max) |
+| `/rewind-settings` | Interactive settings menu, auto-saves on every change |
+| `Esc+Esc` | Quick files-only rewind (cross-session aware) |
+
+## Configuration
+
+Config lives at `~/.pi/agent/config/rewind.json` (auto-created on first save). Environment variables override file settings.
+
+```json
+{
+  "maxCheckpoints": 50,          // 0 = unlimited, never prune current session
+  "keepOldSessions": false,       // true = keep checkpoints from previous sessions
+  "cleanupHintThreshold": 200     // show cleanup hint when checkpoints exceed this
+}
+```
+
+| Env var | Overrides |
+|---|---|
+| `PI_REWIND_MAX_CHECKPOINTS` | `maxCheckpoints` |
+| `PI_REWIND_KEEP_OLD_SESSIONS` | `keepOldSessions` (set to `1`, `true`, or `yes`) |
+| `PI_REWIND_CLEANUP_HINT_THRESHOLD` | `cleanupHintThreshold` |
+
+Use `/rewind-settings` to change config live — no restart needed.
 
 ## Performance
 
@@ -67,11 +98,12 @@ Two-layer split: `core.ts` is pure git operations with zero Pi dependency (indep
 
 ```
 src/
-├── core.ts       # 723 LOC — git operations, filtering, safe restore, branch safety, prune
-├── index.ts      # 280 LOC — Pi event hooks, checkpoint scheduling, auto-prune
-├── commands.ts   # 344 LOC — /rewind, Esc+Esc, fork/tree handlers
-├── state.ts      #  74 LOC — shared mutable state
-└── ui.ts         #  33 LOC — footer status indicator
+├── config.ts     #  87 LOC — load/save rewind.json, env var overrides
+├── core.ts       # 830 LOC — git operations, filtering, safe restore, branch safety, prune, stats
+├── index.ts      # 284 LOC — Pi event hooks, checkpoint scheduling, auto-prune
+├── commands.ts   # 741 LOC — /rewind, /rewind-cleanup, /rewind-settings, Esc+Esc, fork/tree
+├── state.ts      #  79 LOC — shared mutable state (config preserved across resets)
+└── ui.ts         #  49 LOC — footer status, cleanup hint, threshold notifications
 tests/
 ├── core.test.ts  # 362 LOC — 20 tests passing
 └── bench.ts      # 252 LOC — performance benchmarks

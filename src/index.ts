@@ -13,6 +13,9 @@
  * Usage:
  *   pi -e ./src/index.ts
  *   pi install github.com/arpagon/pi-rewind
+ *
+ * Configuration (see src/config.ts):
+ *   ~/.pi/agent/config/rewind.json  or  PI_REWIND_* env vars
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -25,8 +28,8 @@ import {
   pruneCheckpoints,
   pruneOldSessions,
   MUTATING_TOOLS,
-  DEFAULT_MAX_CHECKPOINTS,
 } from "./core.js";
+import { loadConfig } from "./config.js";
 import { createInitialState, resetState } from "./state.js";
 import { updateStatus, clearStatus } from "./ui.js";
 import { registerCommands, handleForkRestore, handleTreeRestore } from "./commands.js";
@@ -53,14 +56,14 @@ function describeToolCall(toolName: string, input: any): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  const state = createInitialState();
+  // Load config (env vars override file defaults)
+  const config = loadConfig();
+  const state = createInitialState(config);
 
-  // Register /rewind command and Esc+Esc shortcut
+  // Register /rewind command, /rewind cleanup, and Esc+Esc shortcut
   registerCommands(pi, state);
 
-  // ========================================================================
   // Session lifecycle
-  // ========================================================================
 
   async function initSession(ctx: any): Promise<void> {
     resetState(state);
@@ -74,9 +77,11 @@ export default function (pi: ExtensionAPI) {
     state.repoRoot = await getRepoRoot(ctx.cwd);
     state.sessionId = ctx.sessionManager.getSessionId();
 
-    // Rebuild checkpoint cache from existing git refs (for resumed sessions)
+    // Rebuild checkpoint cache from existing git refs
     try {
-      const existing = await loadAllCheckpoints(state.repoRoot, state.sessionId);
+      const existing = state.config.keepOldSessions
+        ? await loadAllCheckpoints(state.repoRoot)
+        : await loadAllCheckpoints(state.repoRoot, state.sessionId);
       for (const cp of existing) {
         state.checkpoints.set(cp.id, cp);
       }
@@ -104,20 +109,31 @@ export default function (pi: ExtensionAPI) {
 
     if (ctx.hasUI) updateStatus(state, ctx);
 
-    // Prune old sessions in background (non-blocking)
+    // Handle old sessions: prune or keep based on config
     if (state.repoRoot && state.sessionId) {
       const root = state.repoRoot;
       const sid = state.sessionId;
-      pruneOldSessions(root, sid).then((pruned) => {
-        if (pruned > 0) {
-          // Reload cache after prune
-          loadAllCheckpoints(root, sid).then((remaining) => {
-            state.checkpoints.clear();
-            for (const cp of remaining) state.checkpoints.set(cp.id, cp);
-            if (ctx.hasUI) updateStatus(state, ctx);
-          }).catch(() => {});
-        }
-      }).catch(() => {});
+
+      if (state.config.keepOldSessions) {
+        // User opted into keeping old sessions — don't prune
+        // But still reload cache to include any previously-unloaded old session checkpoints
+        loadAllCheckpoints(root).then((all) => {
+          state.checkpoints.clear();
+          for (const cp of all) state.checkpoints.set(cp.id, cp);
+          if (ctx.hasUI) updateStatus(state, ctx);
+        }).catch(() => {});
+      } else {
+        // Default: prune old sessions (keep 0 from old sessions)
+        pruneOldSessions(root, sid).then((pruned) => {
+          if (pruned > 0) {
+            loadAllCheckpoints(root, sid).then((remaining) => {
+              state.checkpoints.clear();
+              for (const cp of remaining) state.checkpoints.set(cp.id, cp);
+              if (ctx.hasUI) updateStatus(state, ctx);
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
     }
   }
 
@@ -132,9 +148,7 @@ export default function (pi: ExtensionAPI) {
     await initSession(ctx);
   });
 
-  // ========================================================================
   // Capture user prompt for checkpoint labels
-  // ========================================================================
 
   pi.on("before_agent_start", async (event, _ctx) => {
     state.currentPrompt = truncate(String(event.prompt || ""), 60);
@@ -143,17 +157,13 @@ export default function (pi: ExtensionAPI) {
     state.turnHadMutations = false;
   });
 
-  // ========================================================================
   // Track turn index
-  // ========================================================================
 
   pi.on("turn_start", async (event, _ctx) => {
     state.currentTurnIndex = event.turnIndex;
   });
 
-  // ========================================================================
   // Capture tool args for checkpoint labels
-  // ========================================================================
 
   pi.on("tool_call", async (event, _ctx) => {
     if (MUTATING_TOOLS.has(event.toolName)) {
@@ -162,9 +172,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ========================================================================
   // Track mutating tools (accumulate per turn, checkpoint at turn_end)
-  // ========================================================================
 
   pi.on("tool_execution_end", async (event, _ctx) => {
     if (!MUTATING_TOOLS.has(event.toolName)) return;
@@ -179,9 +187,7 @@ export default function (pi: ExtensionAPI) {
     state.turnToolDescriptions.push(toolDesc);
   });
 
-  // ========================================================================
   // Create checkpoint at turn_end (1 per model response, like Cline)
-  // ========================================================================
 
   pi.on("turn_end", async (_event, ctx) => {
     if (!state.gitAvailable || state.failed) return;
@@ -230,23 +236,29 @@ export default function (pi: ExtensionAPI) {
     // Wait for checkpoint to complete before pruning
     if (state.pending) await state.pending;
 
-    // Auto-prune
-    try {
-      const pruned = await pruneCheckpoints(
-        state.repoRoot,
-        state.sessionId,
-        DEFAULT_MAX_CHECKPOINTS,
-      );
-      if (pruned > 0) {
-        const remaining = await loadAllCheckpoints(state.repoRoot, state.sessionId);
-        state.checkpoints.clear();
-        for (const cp of remaining) {
-          state.checkpoints.set(cp.id, cp);
+    // Auto-prune (per-session rolling window)
+    const maxCp = state.config.maxCheckpoints;
+    if (maxCp > 0) {
+      try {
+        const pruned = await pruneCheckpoints(
+          state.repoRoot,
+          state.sessionId,
+          maxCp,
+        );
+        if (pruned > 0) {
+          // Reload cache — all checkpoints if keepOldSessions, else current session only
+          const remaining = state.config.keepOldSessions
+            ? await loadAllCheckpoints(state.repoRoot)
+            : await loadAllCheckpoints(state.repoRoot, state.sessionId);
+          state.checkpoints.clear();
+          for (const cp of remaining) {
+            state.checkpoints.set(cp.id, cp);
+          }
+          if (ctx.hasUI) updateStatus(state, ctx);
         }
-        if (ctx.hasUI) updateStatus(state, ctx);
+      } catch {
+        // Pruning is non-critical
       }
-    } catch {
-      // Pruning is non-critical
     }
 
     // Reset turn state
@@ -254,9 +266,7 @@ export default function (pi: ExtensionAPI) {
     state.turnHadMutations = false;
   });
 
-  // ========================================================================
   // Fork / tree restore hooks
-  // ========================================================================
 
   pi.on("session_before_fork", async (event, ctx) => {
     return handleForkRestore(state, event, ctx);
@@ -266,9 +276,7 @@ export default function (pi: ExtensionAPI) {
     return handleTreeRestore(state, event, ctx);
   });
 
-  // ========================================================================
   // Shutdown
-  // ========================================================================
 
   pi.on("session_shutdown", async () => {
     if (state.pending) await state.pending;
