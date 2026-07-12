@@ -211,18 +211,17 @@ export async function handleForkRestore(
   const entry = ctx.sessionManager.getEntry(event.entryId);
   const targetTs = entry?.timestamp ? new Date(entry.timestamp).getTime() : Date.now();
 
-  // Find best checkpoint
+  // Find best checkpoint and determine if files have changed since that point
   const sorted = [...state.checkpoints.values()].sort((a, b) => b.timestamp - a.timestamp);
-  const target = sorted.find((cp) => cp.timestamp <= targetTs) ?? sorted[sorted.length - 1];
+  const targetCp = sorted.find((cp) => cp.timestamp <= targetTs) ?? (sorted.length > 0 ? sorted[sorted.length - 1] : undefined);
+  const latestCp = sorted[0];
 
-  if (!target && state.resumeCheckpoint) {
-    // Use resume checkpoint as fallback
-  }
-
-  const cp = target || state.resumeCheckpoint;
+  // Offer file restore only when target differs from latest (changes happened after target)
+  const hasFileChanges = latestCp && targetCp && latestCp.id !== targetCp.id;
+  const cp = hasFileChanges ? targetCp : state.resumeCheckpoint;
 
   const options: string[] = ["Conversation only (keep files)"];
-  if (cp) {
+  if (hasFileChanges) {
     options.push("Restore all (files + conversation)");
     options.push("Code only (restore files, keep conversation)");
   }
@@ -260,20 +259,28 @@ export async function handleForkRestore(
 
 export async function handleTreeRestore(
   state: RewindState,
-  event: { preparation: { targetId: string } },
+  event: { preparation: { targetId: string; oldLeafId: string | null } },
   ctx: any,
 ): Promise<{ cancel: true } | undefined> {
   if (!state.gitAvailable || !state.repoRoot || !state.sessionId) return undefined;
   if (!ctx.hasUI) return undefined;
 
-  const entry = ctx.sessionManager.getEntry(event.preparation.targetId);
-  const targetTs = entry?.timestamp ? new Date(entry.timestamp).getTime() : Date.now();
+  const targetEntry = ctx.sessionManager.getEntry(event.preparation.targetId);
+  const targetTs = targetEntry?.timestamp ? new Date(targetEntry.timestamp).getTime() : Date.now();
 
   const sorted = [...state.checkpoints.values()].sort((a, b) => b.timestamp - a.timestamp);
-  const cp = sorted.find((c) => c.timestamp <= targetTs) ?? state.resumeCheckpoint;
+  const targetCp = sorted.find((c) => c.timestamp <= targetTs) ?? state.resumeCheckpoint;
+
+  // Only show restore when navigation crosses a checkpoint boundary (old leaf vs target)
+  const oldLeafEntry = event.preparation.oldLeafId
+    ? ctx.sessionManager.getEntry(event.preparation.oldLeafId)
+    : undefined;
+  const oldLeafTs = oldLeafEntry?.timestamp ? new Date(oldLeafEntry.timestamp).getTime() : Date.now();
+  const oldLeafCp = sorted.find((c) => c.timestamp <= oldLeafTs) ?? state.resumeCheckpoint;
+  const hasFileChanges = oldLeafCp && targetCp && oldLeafCp.id !== targetCp.id;
 
   const options: string[] = ["Keep current files"];
-  if (cp) options.push("Restore files to that point");
+  if (hasFileChanges) options.push("Restore files to that point");
   if (state.redoStack.length > 0) options.push("↩ Undo last rewind");
   options.push("Cancel navigation");
 
@@ -289,8 +296,8 @@ export async function handleTreeRestore(
     return { cancel: true };
   }
 
-  if (cp) {
-    await performRestore(state, ctx, cp, "files");
+  if (targetCp) {
+    await performRestore(state, ctx, targetCp, "files");
     ctx.ui.notify("Files restored to checkpoint", "info");
   }
 

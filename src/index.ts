@@ -30,6 +30,38 @@ import {
 import { createInitialState, resetState } from "./state.js";
 import { updateStatus, clearStatus } from "./ui.js";
 import { registerCommands, handleForkRestore, handleTreeRestore } from "./commands.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import * as os from "os";
+import * as path from "path";
+
+function repoKey(repoRoot) {
+  return repoRoot.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
+function leafFilePath(repoRoot) {
+  return path.join(os.homedir(), ".pi", "agent", "pi-rewind", `leaf-${repoKey(repoRoot)}.json`);
+}
+
+function saveLeafId(repoRoot, leafId) {
+  const file = leafFilePath(repoRoot);
+  const dir = path.dirname(file);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(file, JSON.stringify({ leafId }));
+}
+
+function loadLeafId(repoRoot) {
+  const file = leafFilePath(repoRoot);
+  if (!existsSync(file)) return null;
+  try {
+    const data = JSON.parse(readFileSync(file, "utf-8"));
+    return data?.leafId || null;
+  } catch { return null; }
+}
+
+function clearLeafId(repoRoot) {
+  const file = leafFilePath(repoRoot);
+  try { writeFileSync(file, JSON.stringify({ leafId: null })); } catch {}
+}
 
 /** Truncate a string to maxLen, adding ellipsis if needed */
 function truncate(s: string, maxLen: number): string {
@@ -103,6 +135,14 @@ export default function (pi: ExtensionAPI) {
     }
 
     if (ctx.hasUI) updateStatus(state, ctx);
+
+    // Restore leaf position from saved navigation point
+    if (state.repoRoot) {
+      const savedLeaf = loadLeafId(state.repoRoot);
+      if (savedLeaf && ctx.sessionManager.getEntry(savedLeaf)) {
+        ctx.sessionManager.branch(savedLeaf);
+      }
+    }
 
     // Prune old sessions in background (non-blocking)
     if (state.repoRoot && state.sessionId) {
