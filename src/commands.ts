@@ -7,8 +7,14 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { RewindState } from "./state.js";
-import type { CheckpointData } from "./core.js";
-import { restoreCheckpoint, createCheckpoint, diffCheckpoints, sanitizeForRef, git } from "./core.js";
+import type { CheckpointData, RestorePreview } from "./core.js";
+import {
+  buildRestorePreview,
+  createCheckpoint,
+  deleteCheckpoint,
+  git,
+  restoreCheckpoint,
+} from "./core.js";
 
 // ============================================================================
 // Helpers
@@ -47,6 +53,27 @@ const RESTORE_OPTIONS: { label: string; value: RestoreMode }[] = [
   { label: "Cancel", value: "cancel" },
 ];
 
+function formatRestorePreview(preview: RestorePreview): string {
+  const sections: string[] = [];
+
+  if (preview.worktreeDiff) {
+    sections.push(`Working tree changes to rewind:\n${preview.worktreeDiff}`);
+  }
+  if (preview.indexDiff) {
+    sections.push(`Staging changes to rewind:\n${preview.indexDiff}`);
+  }
+  if (preview.untrackedFilesToRemove.length > 0) {
+    const shown = preview.untrackedFilesToRemove.slice(0, 50);
+    const remaining = preview.untrackedFilesToRemove.length - shown.length;
+    const suffix = remaining > 0 ? `\n...and ${remaining} more` : "";
+    sections.push(
+      `New untracked files to remove (recoverable with undo):\n${shown.join("\n")}${suffix}`,
+    );
+  }
+
+  return sections.join("\n\n").slice(0, 4000);
+}
+
 // ============================================================================
 // Rewind flow
 // ============================================================================
@@ -73,7 +100,7 @@ async function runRewindFlow(
 
   // Build picker items
   const items: string[] = [];
-  const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
+  const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.repoRoot).catch(() => "unknown");
   const undoRef = state.redoStack.length > 0 ? state.redoStack[state.redoStack.length - 1] : null;
   if (undoRef) {
     items.push("↩ Undo last rewind");
@@ -90,8 +117,10 @@ async function runRewindFlow(
 
   // Handle undo
   if (choice === "↩ Undo last rewind" && undoRef) {
-    await performRestore(state, ctx, undoRef, "files");
-    state.redoStack.pop();
+    const undoIndex = state.redoStack.length - 1;
+    const restored = await performRestore(state, ctx, undoRef, "files");
+    if (!restored) return;
+    state.redoStack.splice(undoIndex, 1);
     ctx.ui.notify("Undo successful — files restored to before last rewind", "info");
     return;
   }
@@ -100,28 +129,6 @@ async function runRewindFlow(
   const idx = items.indexOf(choice) - (undoRef ? 1 : 0);
   if (idx < 0 || idx >= checkpoints.length) return;
   const target = checkpoints[idx];
-
-  // Show diff preview
-  let diffText = "";
-  try {
-    const diff = await diffCheckpoints(state.repoRoot, target.worktreeTreeSha, "HEAD");
-    if (diff && diff !== "(diff unavailable)") {
-      diffText = diff.slice(0, 2000);
-    }
-  } catch {
-    // Continue without preview if diff fails
-  }
-
-  if (diffText) {
-    const proceed = await ctx.ui.confirm(
-      `Files changed since checkpoint #${idx + 1}:\n\n${diffText}`,
-      "Proceed with restore?",
-    );
-    if (!proceed) {
-      ctx.ui.notify("Rewind cancelled", "info");
-      return;
-    }
-  }
 
   // Ask restore mode
   const modeChoice = await ctx.ui.select(
@@ -135,7 +142,8 @@ async function runRewindFlow(
   }
 
   if (mode === "files" || mode === "all") {
-    await performRestore(state, ctx, target, "files");
+    const restored = await performRestore(state, ctx, target, "files");
+    if (!restored) return;
   }
 
   if (mode === "conversation" || mode === "all") {
@@ -165,34 +173,86 @@ async function runRewindFlow(
   ctx.ui.notify(`Rewound ${what} to checkpoint #${idx + 1}`, "info");
 }
 
-async function performRestore(
+type RestoreUI = {
+  notify: (msg: string, level: "info" | "warning" | "error") => void;
+  confirm: (title: string, message: string) => Promise<boolean>;
+};
+
+export interface RestoreDependencies {
+  createCheckpoint: typeof createCheckpoint;
+  buildRestorePreview: typeof buildRestorePreview;
+  restoreCheckpoint: typeof restoreCheckpoint;
+  deleteCheckpoint: typeof deleteCheckpoint;
+}
+
+const DEFAULT_RESTORE_DEPENDENCIES: RestoreDependencies = {
+  createCheckpoint,
+  buildRestorePreview,
+  restoreCheckpoint,
+  deleteCheckpoint,
+};
+
+export async function performRestore(
   state: RewindState,
-  ctx: { ui: { notify: (msg: string, level: "info" | "warning" | "error") => void } },
+  ctx: { ui: RestoreUI },
   target: CheckpointData,
   _mode: "files",
-): Promise<void> {
-  if (!state.repoRoot || !state.sessionId) return;
+  dependencies: RestoreDependencies = DEFAULT_RESTORE_DEPENDENCIES,
+): Promise<boolean> {
+  if (!state.repoRoot || !state.sessionId) return false;
 
   // Create before-restore checkpoint (safety net)
+  let beforeCp: CheckpointData;
   try {
     const beforeId = `before-restore-${state.sessionId}-${Date.now()}`;
-    const beforeCp = await createCheckpoint({
+    beforeCp = await dependencies.createCheckpoint({
       root: state.repoRoot,
       id: beforeId,
       sessionId: state.sessionId,
       trigger: "before-restore",
       turnIndex: 0,
     });
-    state.redoStack.push(beforeCp);
-  } catch {
-    // Continue anyway — we tried
+  } catch (err) {
+    ctx.ui.notify(
+      `Restore cancelled: safety checkpoint failed: ${err instanceof Error ? err.message : err}`,
+      "error",
+    );
+    return false;
+  }
+
+  let preview: RestorePreview;
+  try {
+    preview = await dependencies.buildRestorePreview(state.repoRoot, target, beforeCp);
+  } catch (err) {
+    await dependencies.deleteCheckpoint(state.repoRoot, beforeCp.id).catch(() => {});
+    ctx.ui.notify(
+      `Restore cancelled: preview failed: ${err instanceof Error ? err.message : err}`,
+      "error",
+    );
+    return false;
+  }
+
+  const previewText = formatRestorePreview(preview);
+  if (previewText) {
+    const proceed = await ctx.ui.confirm("Proceed with file restore?", previewText);
+    if (!proceed) {
+      await dependencies.deleteCheckpoint(state.repoRoot, beforeCp.id).catch(() => {});
+      ctx.ui.notify("Rewind cancelled", "info");
+      return false;
+    }
   }
 
   // Restore files
+  state.redoStack.push(beforeCp);
   try {
-    await restoreCheckpoint(state.repoRoot, target);
+    await dependencies.restoreCheckpoint(state.repoRoot, target, {
+      skippedLargeFiles: beforeCp.skippedLargeFiles,
+      skippedLargeDirs: beforeCp.skippedLargeDirs,
+    });
+    return true;
   } catch (err) {
     ctx.ui.notify(`Restore failed: ${err instanceof Error ? err.message : err}`, "error");
+    return false;
   }
 }
 
@@ -237,8 +297,11 @@ export async function handleForkRestore(
   if (choice === "Conversation only (keep files)") return undefined;
 
   if (choice === "↩ Undo last rewind" && state.redoStack.length > 0) {
-    const undoCp = state.redoStack.pop()!;
-    await performRestore(state, ctx, undoCp, "files");
+    const undoIndex = state.redoStack.length - 1;
+    const undoCp = state.redoStack[undoIndex];
+    const restored = await performRestore(state, ctx, undoCp, "files");
+    if (!restored) return { cancel: true };
+    state.redoStack.splice(undoIndex, 1);
     ctx.ui.notify("Files restored to before last rewind", "info");
     return { cancel: true };
   }
@@ -248,7 +311,8 @@ export async function handleForkRestore(
     return undefined;
   }
 
-  await performRestore(state, ctx, cp, "files");
+  const restored = await performRestore(state, ctx, cp, "files");
+  if (!restored) return { cancel: true };
   ctx.ui.notify("Files restored from checkpoint", "info");
 
   if (choice === "Code only (restore files, keep conversation)") {
@@ -283,14 +347,18 @@ export async function handleTreeRestore(
   if (choice === "Keep current files") return undefined;
 
   if (choice === "↩ Undo last rewind" && state.redoStack.length > 0) {
-    const undoCp = state.redoStack.pop()!;
-    await performRestore(state, ctx, undoCp, "files");
+    const undoIndex = state.redoStack.length - 1;
+    const undoCp = state.redoStack[undoIndex];
+    const restored = await performRestore(state, ctx, undoCp, "files");
+    if (!restored) return { cancel: true };
+    state.redoStack.splice(undoIndex, 1);
     ctx.ui.notify("Files restored to before last rewind", "info");
     return { cancel: true };
   }
 
   if (cp) {
-    await performRestore(state, ctx, cp, "files");
+    const restored = await performRestore(state, ctx, cp, "files");
+    if (!restored) return { cancel: true };
     ctx.ui.notify("Files restored to checkpoint", "info");
   }
 
@@ -329,7 +397,7 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
         return;
       }
 
-      const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
+      const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.repoRoot).catch(() => "unknown");
       const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state, currentBranch));
       const choice = await ctx.ui.select("Quick rewind (files only):", items);
       if (!choice) return;
@@ -337,8 +405,10 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
       const idx = items.indexOf(choice);
       if (idx < 0) return;
 
-      await performRestore(state, { ui: ctx.ui }, checkpoints[idx], "files");
-      ctx.ui.notify(`Files rewound to checkpoint #${idx + 1}`, "info");
+      const restored = await performRestore(state, { ui: ctx.ui }, checkpoints[idx], "files");
+      if (restored) {
+        ctx.ui.notify(`Files rewound to checkpoint #${idx + 1}`, "info");
+      }
     },
   });
 }
