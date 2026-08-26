@@ -86,12 +86,12 @@ export interface CheckpointData {
  * `cmd` is parsed into args respecting quotes.
  */
 export function git(
-  cmd: string,
+  cmd: string | string[],
   cwd: string,
-  opts: { env?: NodeJS.ProcessEnv; input?: string } = {},
+  opts: { env?: NodeJS.ProcessEnv; input?: string; trimOutput?: boolean } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const args = parseArgs(cmd);
+    const args = Array.isArray(cmd) ? cmd : parseArgs(cmd);
     const proc = spawn("git", args, {
       cwd,
       env: opts.env,
@@ -104,7 +104,7 @@ export function git(
     proc.stderr.on("data", (d) => (stderr += d));
 
     proc.on("close", (code) => {
-      if (code === 0) resolve(stdout.trim());
+      if (code === 0) resolve(opts.trimOutput === false ? stdout : stdout.trim());
       else reject(new Error(stderr || `git ${args[0]} failed (code ${code})`));
     });
     proc.on("error", reject);
@@ -223,7 +223,11 @@ async function captureStatusSnapshot(root: string): Promise<StatusSnapshot> {
     skippedLargeFiles: [],
   };
 
-  const output = await git("status --porcelain=2 -z --untracked-files=all", root).catch(() => "");
+  const output = await git(
+    ["status", "--porcelain=2", "-z", "--untracked-files=all"],
+    root,
+    { trimOutput: false },
+  );
   if (!output) return snap;
 
   const entries = output.split("\0").filter(Boolean);
@@ -395,8 +399,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
     const BATCH = 100;
     for (let i = 0; i < filtered.length; i += BATCH) {
       const batch = filtered.slice(i, i + BATCH);
-      const paths = batch.map((f) => `"${f}"`).join(" ");
-      await git(`add --all -- ${paths}`, root, { env: tmpEnv });
+      await git(["add", "--all", "--", ...batch], root, { env: tmpEnv });
     }
 
     const worktreeTreeSha = await git("write-tree", root, { env: tmpEnv });
@@ -461,7 +464,16 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
  * Restore worktree + index to a checkpoint's state.
  * Safely preserves pre-existing untracked files and skipped large items.
  */
-export async function restoreCheckpoint(root: string, cp: CheckpointData): Promise<void> {
+export interface RestoreProtection {
+  skippedLargeFiles?: string[];
+  skippedLargeDirs?: string[];
+}
+
+export async function restoreCheckpoint(
+  root: string,
+  cp: CheckpointData,
+  protection: RestoreProtection = {},
+): Promise<void> {
   // Safety: verify we're on the same branch as when the checkpoint was created
   if (cp.branch) {
     const currentBranch = await git("rev-parse --abbrev-ref HEAD", root).catch(() => "unknown");
@@ -472,23 +484,19 @@ export async function restoreCheckpoint(root: string, cp: CheckpointData): Promi
       );
     }
   }
-  // 1. Reset HEAD
-  if (cp.headSha !== ZEROS) {
-    await git(`reset --hard ${cp.headSha}`, root);
-  }
-
-  // 2. Restore worktree from snapshot tree
+  // 1. Restore worktree from snapshot tree without moving the current branch HEAD.
   await git(`read-tree --reset -u ${cp.worktreeTreeSha}`, root);
 
-  // 3. Safe-clean new untracked files only
+  // 2. Safe-clean new untracked files only. Preserve anything the safety
+  // checkpoint could not capture, so rewind never deletes unrecoverable data.
   await safeClean(
     root,
     cp.preexistingUntrackedFiles || [],
-    cp.skippedLargeFiles || [],
-    cp.skippedLargeDirs || [],
+    [...(cp.skippedLargeFiles || []), ...(protection.skippedLargeFiles || [])],
+    [...(cp.skippedLargeDirs || []), ...(protection.skippedLargeDirs || [])],
   );
 
-  // 4. Restore staged state without touching files
+  // 3. Restore staged state without touching files.
   await git(`read-tree --reset ${cp.indexTreeSha}`, root);
 }
 
@@ -498,18 +506,26 @@ async function safeClean(
   skippedFiles: string[],
   skippedDirs: string[],
 ): Promise<void> {
-  const output = await git("ls-files --others --exclude-standard", root).catch(() => "");
+  const output = await git(
+    ["ls-files", "-z", "--others", "--exclude-standard"],
+    root,
+    { trimOutput: false },
+  );
   if (!output) return;
-  const current = output.split("\n").filter(Boolean);
+  const current = output.split("\0").filter(Boolean);
   if (current.length === 0) return;
 
   const preSet = new Set(preexisting);
   const sfSet = new Set(skippedFiles);
-  const sdSet = new Set(skippedDirs);
+  const sdSet = new Set([
+    ...skippedDirs,
+    ...detectLargeDirs(current, [], MAX_UNTRACKED_DIR_FILES),
+  ]);
 
   const toRemove = current.filter((f) => {
     if (preSet.has(f)) return false;
     if (shouldIgnoreForSnapshot(f)) return false;
+    if (isLargeFile(root, f)) return false;
     if (sfSet.has(f)) return false;
     if (isPathWithinAny(f, sdSet)) return false;
     return true;
@@ -520,9 +536,46 @@ async function safeClean(
   const BATCH = 100;
   for (let i = 0; i < toRemove.length; i += BATCH) {
     const batch = toRemove.slice(i, i + BATCH);
-    const paths = batch.map((f) => `"${f}"`).join(" ");
-    await git(`clean -f -- ${paths}`, root).catch(() => {});
+    await git(["clean", "-f", "--", ...batch], root);
   }
+}
+
+export interface RestorePreview {
+  worktreeDiff: string;
+  indexDiff: string;
+  untrackedFilesToRemove: string[];
+}
+
+/** Compare the selected checkpoint with the exact safety snapshot to be restored over. */
+export async function buildRestorePreview(
+  root: string,
+  target: CheckpointData,
+  current: CheckpointData,
+): Promise<RestorePreview> {
+  const [worktreeDiff, indexDiff, targetPathsOutput] = await Promise.all([
+    git(["diff-tree", "--stat", "--no-commit-id", target.worktreeTreeSha, current.worktreeTreeSha], root),
+    git(["diff-tree", "--stat", "--no-commit-id", target.indexTreeSha, current.indexTreeSha], root),
+    git(["ls-tree", "-r", "-z", "--name-only", target.worktreeTreeSha], root, { trimOutput: false }),
+  ]);
+
+  const targetPaths = new Set(targetPathsOutput.split("\0").filter(Boolean));
+  const protectedFiles = new Set([
+    ...(target.skippedLargeFiles || []),
+    ...(current.skippedLargeFiles || []),
+  ]);
+  const protectedDirs = new Set([
+    ...(target.skippedLargeDirs || []),
+    ...(current.skippedLargeDirs || []),
+  ]);
+  const untrackedFilesToRemove = (current.preexistingUntrackedFiles || []).filter((path) => {
+    if (targetPaths.has(path)) return false;
+    if (shouldIgnoreForSnapshot(path)) return false;
+    if (protectedFiles.has(path)) return false;
+    if (isPathWithinAny(path, protectedDirs)) return false;
+    return true;
+  });
+
+  return { worktreeDiff, indexDiff, untrackedFilesToRemove };
 }
 
 // ============================================================================

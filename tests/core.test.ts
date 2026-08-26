@@ -10,6 +10,7 @@ import { mkdtemp, rm, writeFile, mkdir, readFile, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+  buildRestorePreview,
   git,
   isGitRepo,
   getRepoRoot,
@@ -28,6 +29,8 @@ import {
   type CreateCheckpointOpts,
   type CheckpointData,
 } from "../src/core.js";
+import { performRestore } from "../src/commands.js";
+import { createInitialState } from "../src/state.js";
 
 // ============================================================================
 // Test harness
@@ -241,6 +244,250 @@ async function runTests() {
 
     const newExists = await stat(join(repo, "new-file.txt")).then(() => true).catch(() => false);
     assert(!newExists, "new file removed");
+  });
+
+  await test("restore preserves the current branch HEAD", async () => {
+    const headRepo = await createTempRepo();
+    try {
+      const cp = await createCheckpoint(makeOpts(headRepo, { id: "cp-before-later-commit" }));
+
+      await writeFile(join(headRepo, "later.txt"), "later commit\n");
+      await git("add later.txt", headRepo);
+      await git('commit -m "later"', headRepo);
+      const headBeforeRestore = await git("rev-parse HEAD", headRepo);
+
+      await restoreCheckpoint(headRepo, cp);
+
+      assertEqual(await git("rev-parse HEAD", headRepo), headBeforeRestore, "HEAD is unchanged");
+      const laterExists = await stat(join(headRepo, "later.txt")).then(() => true).catch(() => false);
+      assert(!laterExists, "worktree still rewinds files introduced by the later commit");
+    } finally {
+      await cleanupRepo(headRepo);
+    }
+  });
+
+  await test("restore recreates staged and unstaged state exactly", async () => {
+    const stagedRepo = await createTempRepo();
+    try {
+      await writeFile(join(stagedRepo, "README.md"), "staged version\n");
+      await git("add README.md", stagedRepo);
+      await writeFile(join(stagedRepo, "README.md"), "worktree version\n");
+      const cp = await createCheckpoint(makeOpts(stagedRepo, { id: "cp-staged-state" }));
+
+      await writeFile(join(stagedRepo, "README.md"), "different version\n");
+      await git("add README.md", stagedRepo);
+      await restoreCheckpoint(stagedRepo, cp);
+
+      assertEqual(
+        await readFile(join(stagedRepo, "README.md"), "utf-8"),
+        "worktree version\n",
+        "worktree content",
+      );
+      assertEqual(await git("show :README.md", stagedRepo), "staged version", "index content");
+      assertEqual(await git("diff --name-only", stagedRepo), "README.md", "unstaged change restored");
+      assertEqual(
+        await git("diff --cached --name-only", stagedRepo),
+        "README.md",
+        "staged change restored",
+      );
+    } finally {
+      await cleanupRepo(stagedRepo);
+    }
+  });
+
+  await test("restore preview compares the exact current snapshot", async () => {
+    const previewRepo = await createTempRepo();
+    try {
+      const target = await createCheckpoint(makeOpts(previewRepo, { id: "cp-preview-target" }));
+      await writeFile(join(previewRepo, "README.md"), "current worktree\n");
+      await writeFile(join(previewRepo, "new-untracked.txt"), "new file\n");
+      const current = await createCheckpoint(makeOpts(previewRepo, { id: "cp-preview-current" }));
+
+      const preview = await buildRestorePreview(previewRepo, target, current);
+      assert(preview.worktreeDiff.includes("README.md"), "preview includes current tracked changes");
+      assert(
+        preview.untrackedFilesToRemove.includes("new-untracked.txt"),
+        "preview lists a new untracked file that restore will remove",
+      );
+    } finally {
+      await cleanupRepo(previewRepo);
+    }
+  });
+
+  await test("restore protects large files omitted from the safety checkpoint", async () => {
+    const largeRepo = await createTempRepo();
+    try {
+      const target = await createCheckpoint(makeOpts(largeRepo, { id: "cp-before-large" }));
+      const largePath = join(largeRepo, "large.bin");
+      await writeFile(largePath, Buffer.alloc(10 * 1024 * 1024 + 1, 1));
+      const current = await createCheckpoint(makeOpts(largeRepo, { id: "cp-with-large" }));
+      assert(current.skippedLargeFiles?.includes("large.bin") === true, "large file was skipped");
+
+      await restoreCheckpoint(largeRepo, target, {
+        skippedLargeFiles: current.skippedLargeFiles,
+        skippedLargeDirs: current.skippedLargeDirs,
+      });
+
+      assertEqual((await stat(largePath)).size, 10 * 1024 * 1024 + 1, "large file remains intact");
+    } finally {
+      await cleanupRepo(largeRepo);
+    }
+  });
+
+  await test("restore never deletes ignored directories", async () => {
+    const ignoredRepo = await createTempRepo();
+    try {
+      const target = await createCheckpoint(makeOpts(ignoredRepo, { id: "cp-before-ignored" }));
+      const ignoredPath = join(ignoredRepo, "node_modules", "local-package", "index.js");
+      await mkdir(join(ignoredRepo, "node_modules", "local-package"), { recursive: true });
+      await writeFile(ignoredPath, "keep me\n");
+
+      await restoreCheckpoint(ignoredRepo, target);
+
+      assertEqual(await readFile(ignoredPath, "utf-8"), "keep me\n", "ignored file remains intact");
+    } finally {
+      await cleanupRepo(ignoredRepo);
+    }
+  });
+
+  await test("performRestore previews, restores, and keeps a working undo snapshot", async () => {
+    const flowRepo = await createTempRepo();
+    try {
+      const target = await createCheckpoint(makeOpts(flowRepo, { id: "cp-flow-target" }));
+      const headBeforeRestore = await git("rev-parse HEAD", flowRepo);
+      await writeFile(join(flowRepo, "README.md"), "changed by agent\n");
+      await writeFile(join(flowRepo, "new-output.txt"), "recoverable output\n");
+
+      const state = createInitialState();
+      state.gitAvailable = true;
+      state.repoRoot = flowRepo;
+      state.sessionId = "flow-session";
+      let confirmationMessage = "";
+
+      const restored = await performRestore(
+        state,
+        {
+          ui: {
+            notify: () => {},
+            confirm: async (_title, message) => {
+              confirmationMessage = message;
+              return true;
+            },
+          },
+        },
+        target,
+        "files",
+      );
+
+      assertEqual(restored, true, "restore succeeds");
+      assert(confirmationMessage.includes("README.md"), "preview includes tracked changes");
+      assert(confirmationMessage.includes("new-output.txt"), "preview includes removed files");
+      assertEqual(await git("rev-parse HEAD", flowRepo), headBeforeRestore, "HEAD remains unchanged");
+      assertEqual(await readFile(join(flowRepo, "README.md"), "utf-8"), "# Test\n", "target restored");
+      const outputExists = await stat(join(flowRepo, "new-output.txt"))
+        .then(() => true)
+        .catch(() => false);
+      assert(!outputExists, "new output is removed by the confirmed restore");
+      assertEqual(state.redoStack.length, 1, "undo snapshot is retained");
+
+      await restoreCheckpoint(flowRepo, state.redoStack[0]);
+      assertEqual(
+        await readFile(join(flowRepo, "README.md"), "utf-8"),
+        "changed by agent\n",
+        "undo snapshot restores tracked content",
+      );
+      assertEqual(
+        await readFile(join(flowRepo, "new-output.txt"), "utf-8"),
+        "recoverable output\n",
+        "undo snapshot restores removed untracked content",
+      );
+    } finally {
+      await cleanupRepo(flowRepo);
+    }
+  });
+
+  await test("restore aborts when the safety checkpoint cannot be created", async () => {
+    const state = createInitialState();
+    state.gitAvailable = true;
+    state.repoRoot = repo;
+    state.sessionId = "fail-closed-session";
+    let restoreCalls = 0;
+    const notifications: string[] = [];
+
+    const restored = await performRestore(
+      state,
+      {
+        ui: {
+          notify: (message) => notifications.push(message),
+          confirm: async () => true,
+        },
+      },
+      { id: "target" } as CheckpointData,
+      "files",
+      {
+        createCheckpoint: async () => { throw new Error("disk full"); },
+        buildRestorePreview: async () => ({
+          worktreeDiff: "",
+          indexDiff: "",
+          untrackedFilesToRemove: [],
+        }),
+        restoreCheckpoint: async () => { restoreCalls++; },
+        deleteCheckpoint: async () => {},
+      },
+    );
+
+    assertEqual(restored, false, "restore reports failure");
+    assertEqual(restoreCalls, 0, "target restore was not attempted");
+    assert(
+      notifications.some((message) => message.includes("safety checkpoint failed")),
+      "user is told why restore was cancelled",
+    );
+  });
+
+  await test("restore requires confirmation for the exact preview", async () => {
+    const state = createInitialState();
+    state.gitAvailable = true;
+    state.repoRoot = repo;
+    state.sessionId = "confirm-session";
+    const beforeCp = { id: "before-confirm" } as CheckpointData;
+    let restoreCalls = 0;
+    let deletedId = "";
+    let confirmationTitle = "";
+    let confirmationMessage = "";
+
+    const restored = await performRestore(
+      state,
+      {
+        ui: {
+          notify: () => {},
+          confirm: async (title, message) => {
+            confirmationTitle = title;
+            confirmationMessage = message;
+            return false;
+          },
+        },
+      },
+      { id: "target" } as CheckpointData,
+      "files",
+      {
+        createCheckpoint: async () => beforeCp,
+        buildRestorePreview: async () => ({
+          worktreeDiff: " README.md | 2 +-",
+          indexDiff: "",
+          untrackedFilesToRemove: ["new file.txt"],
+        }),
+        restoreCheckpoint: async () => { restoreCalls++; },
+        deleteCheckpoint: async (_root, id) => { deletedId = id; },
+      },
+    );
+
+    assertEqual(restored, false, "cancelled restore reports failure");
+    assertEqual(restoreCalls, 0, "restore was not attempted without confirmation");
+    assertEqual(deletedId, beforeCp.id, "unused safety checkpoint ref was deleted");
+    assertEqual(confirmationTitle, "Proceed with file restore?", "confirmation title");
+    assert(confirmationMessage.includes("README.md"), "confirmation includes the worktree diff");
+    assert(confirmationMessage.includes("new file.txt"), "confirmation includes removed files");
+    assertEqual(state.redoStack.length, 0, "cancelled restore does not add undo history");
   });
 
   await test("snapshot ignores node_modules", async () => {
