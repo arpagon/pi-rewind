@@ -8,7 +8,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { RewindState } from "./state.js";
 import type { CheckpointData } from "./core.js";
-import { restoreCheckpoint, createCheckpoint, diffCheckpoints, sanitizeForRef, git } from "./core.js";
+import { restoreCheckpoint, createCheckpoint, diffCheckpoints, sanitizeForRef, branchAliases } from "./core.js";
 
 // ============================================================================
 // Helpers
@@ -22,9 +22,9 @@ function formatTimestamp(ts: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-function formatCheckpointLabel(cp: CheckpointData, index: number, _state: RewindState, currentBranch?: string): string {
+function formatCheckpointLabel(cp: CheckpointData, index: number, _state: RewindState, aliases?: Set<string>): string {
   const time = formatTimestamp(cp.timestamp);
-  const branchTag = (cp.branch && currentBranch && cp.branch !== currentBranch)
+  const branchTag = (cp.branch && aliases && !aliases.has(cp.branch))
     ? ` ⚠️ ${cp.branch}`
     : (cp.branch ? ` [${cp.branch}]` : "");
 
@@ -73,13 +73,13 @@ async function runRewindFlow(
 
   // Build picker items
   const items: string[] = [];
-  const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
+  const aliases = await branchAliases(state.root);
   const undoRef = state.redoStack.length > 0 ? state.redoStack[state.redoStack.length - 1] : null;
   if (undoRef) {
     items.push("↩ Undo last rewind");
   }
   for (let i = 0; i < checkpoints.length; i++) {
-    items.push(formatCheckpointLabel(checkpoints[i], i, state, currentBranch));
+    items.push(formatCheckpointLabel(checkpoints[i], i, state, aliases));
   }
 
   const choice = await ctx.ui.select("Rewind to checkpoint:", items);
@@ -329,8 +329,8 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
         return;
       }
 
-      const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
-      const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state, currentBranch));
+      const aliases = await branchAliases(state.root);
+      const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state, aliases));
       const choice = await ctx.ui.select("Quick rewind (files only):", items);
       if (!choice) return;
 

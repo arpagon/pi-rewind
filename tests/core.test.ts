@@ -345,6 +345,26 @@ async function runTests() {
     }
   });
 
+  await test("restore allows renamed branch (worktree rename)", async () => {
+    const branchRepo = await createTempRepo();
+    try {
+      const cp = await createCheckpoint({
+        root: branchRepo,
+        id: `rename-test-${Date.now()}`,
+        sessionId: "rename-test",
+        trigger: "tool",
+        turnIndex: 0,
+        description: "before rename",
+      });
+      await git("branch -m step-b", branchRepo);
+      await git("branch -m step-c", branchRepo);
+      await git("branch -m step-b", branchRepo);
+      await restoreCheckpoint(branchRepo, cp); // same branch, must not throw
+    } finally {
+      await rm(branchRepo, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   // ------ Cleanup ------
 
   await cleanupRepo(repo);

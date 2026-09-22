@@ -458,14 +458,37 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
 }
 
 /**
+ * All names of the current branch: its name plus every name it was renamed
+ * from. The rename chain lives in the HEAD reflog.
+ */
+export async function branchAliases(root: string): Promise<Set<string>> {
+  const current = await git("rev-parse --abbrev-ref HEAD", root).catch(() => "unknown");
+  const names = new Set([current]);
+  const log = await git("reflog --format=%gs HEAD", root).catch(() => "");
+  const renames = [...log.matchAll(/renamed (?:ref: |from )?refs\/heads\/(\S+) to refs\/heads\/(\S+)/gi)];
+  // BFS over every rename hop — covers renames away and back (A→B→C→B)
+  const todo = [current];
+  while (todo.length > 0) {
+    const b = todo.pop()!;
+    for (const m of renames) {
+      if (m[2] === b && !names.has(m[1])) {
+        names.add(m[1]);
+        todo.push(m[1]);
+      }
+    }
+  }
+  return names;
+}
+
+/**
  * Restore worktree + index to a checkpoint's state.
  * Safely preserves pre-existing untracked files and skipped large items.
  */
 export async function restoreCheckpoint(root: string, cp: CheckpointData): Promise<void> {
-  // Safety: verify we're on the same branch as when the checkpoint was created
+  // Safety: verify we're on the same branch as when the checkpoint was created.
   if (cp.branch) {
     const currentBranch = await git("rev-parse --abbrev-ref HEAD", root).catch(() => "unknown");
-    if (currentBranch !== cp.branch) {
+    if (!(await branchAliases(root)).has(cp.branch)) {
       throw new Error(
         `Branch mismatch: checkpoint was created on "${cp.branch}" but you are on "${currentBranch}". ` +
         `Switch to "${cp.branch}" first, or this restore could corrupt your worktree.`
