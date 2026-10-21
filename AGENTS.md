@@ -11,7 +11,7 @@ This file provides guidance to AI coding agents working on this repository.
 ## Goals
 
 - Match or exceed the rewind experience of Claude Code, Gemini CLI, and Cline
-- Provide a dedicated `/rewind` command and `Esc+Esc` shortcut
+- Provide a dedicated `/rewind` command on Pi and `/rw` on omp (omp reserves `/rewind` and `Esc+Esc`)
 - Per-tool checkpointing (not just per-turn)
 - Safe restore that never deletes ignored directories or large files
 - Checkpoint browser with diff preview before restore
@@ -48,10 +48,12 @@ pi-rewind/
 ├── src/
 │   ├── index.ts           # Extension entry point
 │   ├── core.ts            # Pure git operations (no pi deps)
-│   ├── commands.ts        # /rewind command registration
+│   ├── commands.ts        # /rewind + /rw registration, fork/branch/tree handlers
+│   ├── state.ts           # Shared mutable state
 │   └── ui.ts              # Status indicators, notifications
 ├── tests/
-│   └── core.test.ts       # Unit tests for core git operations
+│   ├── core.test.ts       # Unit tests for core git operations
+│   └── extension.test.ts  # Extension load, command/event, and fork-handler smoke test
 └── docs/
     └── planning/          # Research and planning documents
 ```
@@ -64,6 +66,7 @@ pi -e ./src/index.ts
 
 # Run tests
 npx tsx tests/core.test.ts
+npx tsx tests/extension.test.ts
 
 # Install globally
 pi install /path/to/pi-rewind
@@ -72,14 +75,14 @@ pi install /path/to/pi-rewind
 ## Pi Extension API Reference
 
 Key events used:
-- `session_start` / `session_switch` — Initialize checkpoint state
+- `session_start` (Pi) / `session_switch` (omp) — initialize or re-initialize checkpoint state; forks keep the parent's checkpoints
 - `turn_start` / `turn_end` — Create per-turn checkpoints
-- `tool_execution_end` — Create per-tool checkpoints (write, edit, bash)
-- `session_before_fork` / `session_before_tree` — Offer restore options
+- `tool_execution_end` — Create per-tool checkpoints (write, edit, ast_edit, bash)
+- `session_before_fork` (Pi) / `session_before_branch` (omp) — Offer restore options before forking/branching
+- `session_before_tree` / `session_tree` — Offer restore options before navigation (Pi) or after it (omp)
 
 Key APIs used:
-- `pi.registerCommand()` — Register `/rewind` command
-- `pi.registerShortcut()` — Register `Esc+Esc` shortcut
+- `pi.registerCommand()` — Register `/rewind` (Pi) and `/rw` (omp)
 - `pi.on()` — Subscribe to lifecycle events
 - `ctx.ui.select()` / `ctx.ui.notify()` / `ctx.ui.setStatus()` — User interaction
 - `ctx.compact()` — "Summarize from here" integration

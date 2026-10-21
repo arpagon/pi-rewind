@@ -24,7 +24,7 @@ import {
   shouldIgnoreForSnapshot,
   sanitizeForRef,
   isSafeId,
-  MUTATING_TOOLS,
+  isMutatingTool,
   type CreateCheckpointOpts,
   type CheckpointData,
 } from "../src/core.js";
@@ -124,11 +124,14 @@ async function runTests() {
     assert(!shouldIgnoreForSnapshot("lib/utils.ts"), "lib should pass");
   });
 
-  await test("MUTATING_TOOLS has expected tools", async () => {
-    assert(MUTATING_TOOLS.has("write"), "write");
-    assert(MUTATING_TOOLS.has("edit"), "edit");
-    assert(MUTATING_TOOLS.has("bash"), "bash");
-    assert(!MUTATING_TOOLS.has("read"), "read should not be mutating");
+  await test("isMutatingTool accepts only mutating tools", async () => {
+    assert(isMutatingTool("write"), "write");
+    assert(isMutatingTool("edit"), "edit");
+    assert(isMutatingTool("ast_edit"), "ast_edit");
+    assert(isMutatingTool("bash"), "bash");
+    assert(!isMutatingTool("read"), "read should not be mutating");
+    assert(!isMutatingTool("constructor"), "inherited keys must not match");
+    assert(!isMutatingTool("__proto__"), "__proto__ must not match");
   });
 
   // ------ Git helpers ------

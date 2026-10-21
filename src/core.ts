@@ -44,7 +44,17 @@ export const IGNORED_DIR_NAMES = new Set([
 ]);
 
 /** Tools that modify the filesystem and warrant a checkpoint */
-export const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
+export const MUTATING_TOOLS: Record<string, true> = {
+  write: true,
+  edit: true,
+  ast_edit: true,
+  bash: true,
+};
+
+/** Prototype-safe membership check: ignores inherited keys like "constructor". */
+export function isMutatingTool(name: string): boolean {
+  return Object.hasOwn(MUTATING_TOOLS, name);
+}
 
 export interface CheckpointData {
   /** Unique checkpoint ID (used as git ref name) */

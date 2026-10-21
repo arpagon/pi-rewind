@@ -15,7 +15,7 @@
  *   pi install github.com/arpagon/pi-rewind
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import {
   isGitRepo,
   getRepoRoot,
@@ -24,7 +24,7 @@ import {
   loadAllCheckpoints,
   pruneCheckpoints,
   pruneOldSessions,
-  MUTATING_TOOLS,
+  isMutatingTool,
   DEFAULT_MAX_CHECKPOINTS,
 } from "./core.js";
 import { createInitialState, resetState } from "./state.js";
@@ -37,6 +37,24 @@ function truncate(s: string, maxLen: number): string {
   return s.slice(0, maxLen - 1) + "…";
 }
 
+/**
+ * omp-only events. pi's published typings do not declare them and omp is not a
+ * dependency, so type exactly the surface this extension consumes.
+ */
+type OmpEvents = {
+  on(
+    event: "session_switch",
+    handler: (event: { reason: "new" | "resume" | "fork" }, ctx: ExtensionContext) => Promise<void> | void,
+  ): void;
+  on(
+    event: "session_before_branch",
+    handler: (
+      event: { entryId: string },
+      ctx: ExtensionContext,
+    ) => Promise<{ cancel: true } | { skipConversationRestore: true } | undefined>,
+  ): void;
+};
+
 /** Extract a human-readable description from a tool_call event */
 function describeToolCall(toolName: string, input: any): string {
   if (!input) return toolName;
@@ -45,6 +63,8 @@ function describeToolCall(toolName: string, input: any): string {
       return `write → ${input.path || "?"}`;
     case "edit":
       return `edit → ${input.path || "?"}`;
+    case "ast_edit":
+      return `ast_edit → ${truncate(String(input.paths ?? "?"), 50)}`;
     case "bash":
       return `bash: ${truncate(String(input.command || ""), 50)}`;
     default:
@@ -54,16 +74,26 @@ function describeToolCall(toolName: string, input: any): string {
 
 export default function (pi: ExtensionAPI) {
   const state = createInitialState();
+  // omp injects a `logger` into the extension API; pi does not.
+  const isOmp = "logger" in pi;
+  const omp = pi as unknown as OmpEvents;
 
-  // Register /rewind command and Esc+Esc shortcut
   registerCommands(pi, state);
 
   // ========================================================================
   // Session lifecycle
   // ========================================================================
 
-  async function initSession(ctx: any): Promise<void> {
+  let pendingTreeTargetId: string | null = null;
+  // Bumped whenever a deferred tree prompt must be abandoned.
+  let treeRestoreSeq = 0;
+
+  async function initSession(ctx: ExtensionContext): Promise<void> {
+    // omp can emit session_start and session_switch for the same session.
+    if (state.sessionId === ctx.sessionManager.getSessionId() && state.resumeCheckpoint) return;
     resetState(state);
+    pendingTreeTargetId = null;
+    treeRestoreSeq++;
 
     state.gitAvailable = await isGitRepo(ctx.cwd);
     if (!state.gitAvailable) {
@@ -122,13 +152,25 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (event, ctx) => {
+    // A fork keeps the parent's checkpoints: the new session file has no refs,
+    // so re-initializing would wipe history, the undo stack, and prune the
+    // parent session's refs in the background.
     if (event.reason === "fork") {
-      // Fork: just update session ID for new checkpoint tagging
-      if (!state.gitAvailable) return;
-      state.sessionId = ctx.sessionManager.getSessionId();
+      if (state.gitAvailable) state.sessionId = ctx.sessionManager.getSessionId();
       return;
     }
-    // startup, reload, new, resume: full re-initialization
+    await initSession(ctx);
+  });
+
+  // omp emits session_switch (not session_start) for new/resume/fork; skip the
+  // startup switch that follows session_start for the same session.
+  omp.on("session_switch", async (event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (sessionId === state.sessionId) return;
+    if (event.reason === "fork" && state.gitAvailable) {
+      state.sessionId = sessionId;
+      return;
+    }
     await initSession(ctx);
   });
 
@@ -156,7 +198,7 @@ export default function (pi: ExtensionAPI) {
   // ========================================================================
 
   pi.on("tool_call", async (event, _ctx) => {
-    if (MUTATING_TOOLS.has(event.toolName)) {
+    if (isMutatingTool(event.toolName)) {
       const desc = describeToolCall(event.toolName, event.input);
       state.pendingToolInfo.set(event.toolCallId, desc);
     }
@@ -167,7 +209,7 @@ export default function (pi: ExtensionAPI) {
   // ========================================================================
 
   pi.on("tool_execution_end", async (event, _ctx) => {
-    if (!MUTATING_TOOLS.has(event.toolName)) return;
+    if (!isMutatingTool(event.toolName)) return;
 
     state.turnHadMutations = true;
 
@@ -258,12 +300,39 @@ export default function (pi: ExtensionAPI) {
   // Fork / tree restore hooks
   // ========================================================================
 
+  // Pi emits session_before_fork; omp emits session_before_branch instead.
+  // Register both so each host sees the restore prompt.
   pi.on("session_before_fork", async (event, ctx) => {
     return handleForkRestore(state, event, ctx);
   });
 
+  omp.on("session_before_branch", async (event, ctx) => {
+    return handleForkRestore(state, event, ctx);
+  });
+
   pi.on("session_before_tree", async (event, ctx) => {
-    return handleTreeRestore(state, event, ctx);
+    const targetId = event.preparation.targetId;
+    if (targetId === state.suppressTreeRestoreTarget) {
+      state.suppressTreeRestoreTarget = null;
+      return;
+    }
+    // Pi can prompt before navigating and cancel the navigation; omp's
+    // fullscreen rewind overlay hides dialogs opened here, so defer the prompt
+    // until session_tree fires (see handleTreeRestore).
+    if (!isOmp) return handleTreeRestore(state, targetId, ctx, true);
+    pendingTreeTargetId = targetId;
+  });
+
+  pi.on("session_tree", async (_event, ctx) => {
+    const targetId = pendingTreeTargetId;
+    pendingTreeTargetId = null;
+    if (!targetId) return;
+    // A later navigation or session switch invalidates this prompt.
+    const seq = ++treeRestoreSeq;
+    setTimeout(() => {
+      if (seq !== treeRestoreSeq) return;
+      void handleTreeRestore(state, targetId, ctx, false);
+    }, 50);
   });
 
   // ========================================================================

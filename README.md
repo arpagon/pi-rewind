@@ -1,6 +1,8 @@
 # pi-rewind
 
-Checkpoint/rewind extension for the [Pi coding agent](https://github.com/badlogic/pi-mono). Creates automatic git-based snapshots of your working tree, allowing you to rewind file changes and conversation state when the AI makes mistakes.
+Checkpoint/rewind extension for the [Pi coding agent](https://github.com/badlogic/pi-mono) and [omp](https://github.com/can1357/oh-my-pi). Creates automatic git-based snapshots of your working tree, allowing you to rewind file changes and conversation state when the AI makes mistakes.
+
+> **omp users:** the command is `/rw`. omp dispatches its built-in `/rewind` (conversation-only transcript rewind) before extension commands, so `/rewind` stays a Pi-only name. omp also owns `Esc+Esc`; use `/rw` there instead.
 
 ## Why
 
@@ -10,8 +12,8 @@ Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CL
 
 ## Features
 
-- [x] Dedicated `/rewind` command — checkpoint browser → diff preview → restore
-- [x] `Esc+Esc` keyboard shortcut — quick files-only rewind
+- [x] Dedicated `/rewind` command on Pi, `/rw` on omp — checkpoint browser → diff preview → restore
+- [x] `Esc+Esc` keyboard shortcut — quick files-only rewind (Pi; omp reserves double Escape)
 - [x] Smart checkpointing — snapshots after write/edit/bash tools, 1 per turn
 - [x] Smart dedup — skips checkpoints when worktree unchanged (read-only bash like `ls`, `find`, `cat` don't create checkpoints)
 - [x] Descriptive labels — `"user prompt" → write → file.ts, edit → other.ts`
@@ -33,15 +35,19 @@ Every major coding agent now has rewind/undo: Claude Code (`/rewind`), Gemini CL
 ## Install
 
 ```bash
-# From npm
+# Pi, from npm
 pi install npm:pi-rewind
 
-# From GitHub
+# Pi, from GitHub
 pi install github.com/arpagon/pi-rewind
+
+# omp, from GitHub
+omp plugin install github:arpagon/pi-rewind
 
 # For development
 git clone git@github.com:arpagon/pi-rewind.git
 pi -e ./pi-rewind/src/index.ts
+omp -e ./pi-rewind/src/index.ts
 ```
 
 ## Performance
@@ -67,13 +73,14 @@ Two-layer split: `core.ts` is pure git operations with zero Pi dependency (indep
 
 ```
 src/
-├── core.ts       # 723 LOC — git operations, filtering, safe restore, branch safety, prune
-├── index.ts      # 280 LOC — Pi event hooks, checkpoint scheduling, auto-prune
-├── commands.ts   # 344 LOC — /rewind, Esc+Esc, fork/tree handlers
-├── state.ts      #  74 LOC — shared mutable state
+├── core.ts       # 733 LOC — git operations, filtering, safe restore, branch safety, prune
+├── index.ts      # 345 LOC — Pi/omp event hooks, checkpoint scheduling, auto-prune
+├── commands.ts   # 376 LOC — /rewind, /rw, fork/branch/tree handlers
+├── state.ts      #  78 LOC — shared mutable state
 └── ui.ts         #  33 LOC — footer status indicator
 tests/
-├── core.test.ts  # 362 LOC — 20 tests passing
+├── core.test.ts  # 365 LOC — 20 tests passing
+├── extension.test.ts # 119 LOC — Pi/omp load, event, and prompt smoke test
 └── bench.ts      # 252 LOC — performance benchmarks
 ```
 
@@ -82,12 +89,16 @@ tests/
 ```bash
 # Run tests
 npx tsx tests/core.test.ts
+npx tsx tests/extension.test.ts
 
 # Run benchmarks
 npx tsx tests/bench.ts
 
 # Test with Pi
 pi -e ./src/index.ts
+
+# Test with omp
+omp -e ./src/index.ts
 ```
 
 ## Lineage

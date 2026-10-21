@@ -1,11 +1,11 @@
 /**
- * pi-rewind — /rewind command and Esc+Esc shortcut
+ * pi-rewind — rewind command (/rewind on Pi, /rw on omp)
  *
  * Registers the user-facing rewind command which presents a checkpoint
  * browser and restore options.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import type { RewindState } from "./state.js";
 import type { CheckpointData } from "./core.js";
 import { restoreCheckpoint, createCheckpoint, diffCheckpoints, sanitizeForRef, git } from "./core.js";
@@ -73,7 +73,7 @@ async function runRewindFlow(
 
   // Build picker items
   const items: string[] = [];
-  const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
+  const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.repoRoot).catch(() => "unknown");
   const undoRef = state.redoStack.length > 0 ? state.redoStack[state.redoStack.length - 1] : null;
   if (undoRef) {
     items.push("↩ Undo last rewind");
@@ -142,7 +142,7 @@ async function runRewindFlow(
     // Navigate conversation tree to the checkpoint's point
     // Find the entry closest to the checkpoint timestamp
     const branch = ctx.sessionManager.getBranch();
-    const targetEntry = branch.reduce((best: any, entry: any) => {
+    const targetEntry = branch.reduce<{ id: string; timestamp: string } | null>((best, entry) => {
       if (!entry.timestamp) return best;
       const entryTs = new Date(entry.timestamp).getTime();
       if (!best) return entryTs <= target.timestamp ? entry : best;
@@ -152,9 +152,13 @@ async function runRewindFlow(
     }, null);
 
     if (targetEntry) {
+      // This navigation already restored files above; don't prompt again.
+      // Cleared by the session_before_tree handler when the host delivers it.
+      state.suppressTreeRestoreTarget = targetEntry.id;
       try {
         await ctx.navigateTree(targetEntry.id, { summarize: true });
       } catch {
+        state.suppressTreeRestoreTarget = null;
         ctx.ui.notify("Conversation rewind partially failed", "warning");
       }
     }
@@ -200,10 +204,21 @@ async function performRestore(
 // Handle fork/tree restore prompts
 // ============================================================================
 
+type RestoreContext = {
+  hasUI: boolean;
+  ui: {
+    select(title: string, options: string[]): Promise<string | undefined>;
+    notify(message: string, level: "info" | "warning" | "error"): void;
+  };
+  sessionManager: {
+    getEntry(id: string): { timestamp?: string } | undefined;
+  };
+};
+
 export async function handleForkRestore(
   state: RewindState,
   event: { entryId: string },
-  ctx: any,
+  ctx: RestoreContext,
 ): Promise<{ cancel: true } | { skipConversationRestore: true } | undefined> {
   if (!state.gitAvailable || !state.repoRoot || !state.sessionId) return undefined;
   if (!ctx.hasUI) return undefined;
@@ -258,15 +273,23 @@ export async function handleForkRestore(
   return undefined;
 }
 
+/**
+ * Offer a file restore for a tree navigation.
+ *
+ * Pi calls this from session_before_tree, so the navigation is still
+ * cancellable. omp's fullscreen rewind overlay hides dialogs opened from that
+ * hook, so omp calls it from session_tree instead, after the navigation.
+ */
 export async function handleTreeRestore(
   state: RewindState,
-  event: { preparation: { targetId: string } },
-  ctx: any,
+  targetId: string,
+  ctx: RestoreContext,
+  cancellable: boolean,
 ): Promise<{ cancel: true } | undefined> {
   if (!state.gitAvailable || !state.repoRoot || !state.sessionId) return undefined;
   if (!ctx.hasUI) return undefined;
 
-  const entry = ctx.sessionManager.getEntry(event.preparation.targetId);
+  const entry = ctx.sessionManager.getEntry(targetId);
   const targetTs = entry?.timestamp ? new Date(entry.timestamp).getTime() : Date.now();
 
   const sorted = [...state.checkpoints.values()].sort((a, b) => b.timestamp - a.timestamp);
@@ -275,25 +298,25 @@ export async function handleTreeRestore(
   const options: string[] = ["Keep current files"];
   if (cp) options.push("Restore files to that point");
   if (state.redoStack.length > 0) options.push("↩ Undo last rewind");
-  options.push("Cancel navigation");
+  if (cancellable) options.push("Cancel navigation");
 
   const choice = await ctx.ui.select("Restore Options", options);
 
-  if (!choice || choice === "Cancel navigation") return { cancel: true };
+  if (!choice) return cancellable ? { cancel: true } : undefined;
+  if (choice === "Cancel navigation") return { cancel: true };
   if (choice === "Keep current files") return undefined;
 
   if (choice === "↩ Undo last rewind" && state.redoStack.length > 0) {
     const undoCp = state.redoStack.pop()!;
     await performRestore(state, ctx, undoCp, "files");
     ctx.ui.notify("Files restored to before last rewind", "info");
-    return { cancel: true };
+    return cancellable ? { cancel: true } : undefined;
   }
 
   if (cp) {
     await performRestore(state, ctx, cp, "files");
     ctx.ui.notify("Files restored to checkpoint", "info");
   }
-
   return undefined;
 }
 
@@ -302,14 +325,23 @@ export async function handleTreeRestore(
 // ============================================================================
 
 export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
+  const openRewind = async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    await runRewindFlow(state, ctx);
+  };
+
   pi.registerCommand("rewind", {
     description: "Rewind file changes and/or conversation to a checkpoint",
-    handler: async (_args, ctx) => {
-      await runRewindFlow(state, ctx);
-    },
+    handler: openRewind,
   });
 
-  // Esc+Esc shortcut — register as double-escape
+  // omp dispatches its built-in /rewind (conversation-only transcript rewind)
+  // before extension commands, so expose the same flow under a free name.
+  pi.registerCommand("rw", {
+    description: "Rewind files and/or conversation to a checkpoint",
+    handler: openRewind,
+  });
+
+  // Esc+Esc — Pi only. omp owns double Escape, so this shortcut never fires there.
   pi.registerShortcut("escape escape", {
     description: "Rewind (same as /rewind)",
     handler: async (ctx) => {
@@ -329,7 +361,7 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
         return;
       }
 
-      const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
+      const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.repoRoot).catch(() => "unknown");
       const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state, currentBranch));
       const choice = await ctx.ui.select("Quick rewind (files only):", items);
       if (!choice) return;
